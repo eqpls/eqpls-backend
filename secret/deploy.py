@@ -13,7 +13,6 @@ def parameters(module, path, config):
     tenant = default['tenant']
     endpoint = default['endpoint']
     version = default['version']
-    stage = default['stage']
     system_access_key = default['system_access_key']
     system_secret_key = default['system_secret_key']
     admin_username = default['admin_username']
@@ -28,33 +27,33 @@ def parameters(module, path, config):
     export = True if modconf['export'].lower() == 'true' else False
     memory = modconf['memory']
 
-    environment = [
-        f'discovery.type=single-node'
-    ]
+    environment = []
 
     ports = {
         f'{port}/tcp': (host, port)
     } if export else {}
 
     volumes = [
+        f'{path}/project.ini:/opt/project.ini',
+        f'{path}/{module}:/opt/{module}',
+        f'{path}/common:/opt/common',
+        f'{path}/driver:/opt/driver',
+        f'{path}/schema:/opt/schema',
         f'{path}/{module}/conf.d:/conf.d',
-        f'{path}/{module}/data.d:/usr/share/elasticsearch/data',
+        f'{path}/{module}/data.d:/data.d',
         f'{path}/{module}/back.d:/back.d'
     ]
 
     healthcheck = {
-        'test': 'curl -k https://localhost:9200 || exit 1',
+        'test': f'python {module}/health.py',
         'interval': health_check_interval * 1000000000,
         'timeout': health_check_timeout * 1000000000,
         'retries': health_check_retries
     }
 
-    restart_policy = {
-        'Name': 'on-failure',
-        'MaximumRetryCount': 5
-    }
+    restart_policy = None
 
-    command = None
+    command = f'python {module}'
     options = {
         'detach': True,
         'name': f'{tenant}-{module}',
@@ -67,6 +66,6 @@ def parameters(module, path, config):
         'healthcheck': healthcheck,
         'restart_policy': restart_policy
     }
-    post_exec = f'/usr/share/elasticsearch/bin/elasticsearch-users useradd {system_access_key} -p "{system_secret_key}" -r superuser -s'
+    post_exec = None
 
     return (f'{tenant}/{module}:{version}', command, options, post_exec)
