@@ -28,14 +28,13 @@ def parameters(module, path, config):
     export = True if modconf['export'].lower() == 'true' else False
     memory = modconf['memory']
 
-    # minio_server_url = f'http://{endpoint}'
     minio_browser_redirect_uri = f'https://{endpoint}/minio/ui/'
 
     kc_hostname = config['keycloak']['hostname']
     kc_hostport = config['keycloak']['port']
     kc_openid_config_url = f'http://{kc_hostname}:{kc_hostport}/realms/{tenant}/.well-known/openid-configuration'
     kc_openid_client_id = 'minio'
-    kc_openid_client_secret = 'AE9x8lEmWwuAy7g4jwLqCVxZXOKY6jvF'
+    # kc_openid_client_secret = 'AE9x8lEmWwuAy7g4jwLqCVxZXOKY6jvF'
     kc_openid_display_name = title
     kc_openid_scopes = 'openid'
     kc_openid_redirect_uri = f'https://{endpoint}/minio/ui/oauth_callback'
@@ -44,11 +43,10 @@ def parameters(module, path, config):
     environment = [
         f'MINIO_ROOT_USER={system_access_key}',
         f'MINIO_ROOT_PASSWORD={system_secret_key}',
-        # f'MINIO_SERVER_URL={minio_server_url}',
         f'MINIO_BROWSER_REDIRECT_URL={minio_browser_redirect_uri}',
         f'MINIO_IDENTITY_OPENID_CONFIG_URL_PRIMARY_IAM={kc_openid_config_url}',
         f'MINIO_IDENTITY_OPENID_CLIENT_ID_PRIMARY_IAM={kc_openid_client_id}',
-        f'MINIO_IDENTITY_OPENID_CLIENT_SECRET_PRIMARY_IAM={kc_openid_client_secret}',
+        # f'MINIO_IDENTITY_OPENID_CLIENT_SECRET_PRIMARY_IAM={kc_openid_client_secret}',
         f'MINIO_IDENTITY_OPENID_DISPLAY_NAME_PRIMARY_IAM={kc_openid_display_name}',
         f'MINIO_IDENTITY_OPENID_SCOPES_PRIMARY_IAM={kc_openid_scopes}',
         f'MINIO_IDENTITY_OPENID_REDIRECT_URI_PRIMARY_IAM={kc_openid_redirect_uri}',
@@ -60,8 +58,6 @@ def parameters(module, path, config):
     } if export else {}
 
     volumes = [
-        # f'{path}/webcert/server.key:/root/.minio/certs/private.key',
-        # f'{path}/webcert/server.crt:/root/.minio/certs/public.crt',
         f'{path}/{module}/init.d:/init.d',
         f'{path}/{module}/conf.d:/conf.d',
         f'{path}/{module}/data.d:/data',
@@ -69,7 +65,6 @@ def parameters(module, path, config):
     ]
 
     healthcheck = {
-        # 'test': 'curl -k -f -I https://localhost:9000/minio/health/live || exit 1',
         'test': 'curl -k -f -I http://localhost:9000/minio/health/live || exit 1',
         'interval': health_check_interval * 1000000000,
         'timeout': health_check_timeout * 1000000000,
@@ -94,7 +89,6 @@ def parameters(module, path, config):
         'healthcheck': healthcheck,
         'restart_policy': restart_policy
     }
-    # post_exec = f'/bin/sh -c "mc alias set --insecure data https://localhost:9000 {system_access_key} {system_secret_key}; mc admin policy create --insecure data admin /init.d/policy_admin.json; mc admin policy create --insecure data user /init.d/policy_user.json; mc mb --insecure data/shared; mc mb --insecure data/{system_access_key}; mc mb --insecure data/{admin_username};" &>/dev/null'
-    post_exec = f'/bin/sh -c "mc alias set --insecure data http://localhost:9000 {system_access_key} {system_secret_key}; mc admin policy create --insecure data admin /init.d/policy_admin.json; mc admin policy create --insecure data user /init.d/policy_user.json; mc mb --insecure data/shared; mc mb --insecure data/{system_access_key}; mc mb --insecure data/{admin_username};" &>/dev/null'
+    post_exec = f'/bin/sh -c "mc alias set --insecure data http://localhost:9000 {system_access_key} "{system_secret_key}"; mc admin policy create --insecure data admin /init.d/policy_admin.json; mc admin policy create --insecure data user /init.d/policy_user.json; mc mb --insecure data/shared; mc mb --insecure data/{system_access_key}; mc mb --insecure data/{admin_username};" &>/dev/null'
 
     return (f'{tenant}/{module}:{version}', command, options, post_exec)

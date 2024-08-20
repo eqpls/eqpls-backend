@@ -34,14 +34,6 @@ def parameters(module, path, config):
     publish = os.path.abspath(modconf['publish'])
     proxies = filter(None, [p.strip() for p in modconf['proxies'].split(',')])
 
-    with open(f'{path}/{module}/conf.d/environment.js', 'w') as fd: fd.write(\
-f"""
-const DEFAULT_AUTH_URL = "https://{endpoint}/auth"
-const DEFAULT_AUTH_REALM = "{tenant}";
-const DEFAULT_AUTH_CLIENT_ID = "{tenant}";
-"""
-)
-
     upstreams = ''
     locations = ''
 
@@ -157,8 +149,6 @@ http {
             proxy_pass http://keycloak/;
         }
 %s
-        location /environment.js { alias /environment.js; }
-
         location / { alias /webroot/; }
     }
 
@@ -176,7 +166,6 @@ http {
 
     volumes = [
         f'{path}/{module}/conf.d/nginx.conf:/etc/nginx/nginx.conf',
-        f'{path}/{module}/conf.d/environment.js:/environment.js',
         f'{publish}/webroot:/webroot',
         f'{path}/webcert:/webcert',
         f'{path}/{module}/data.d:/data.d',

@@ -238,14 +238,10 @@ class KeyCloak(DriverBase):
             }
         })
         for client in await self.get(f'/admin/realms/{realm}/clients'):
-            if client['clientId'] == 'minio': clientId = client['id']; break
+            if client['clientId'] == 'minio':
+                clientId = client['id']; break
         else: raise EpException(404, 'Could not find client')
         await self.put(f'/admin/realms/{realm}/clients/{clientId}/default-client-scopes/{scopeId}', {})
-
-        minioSecret = await self.get(f'/admin/realms/{realm}/clients/{clientId}/client-secret')
-
-
-        # https://eqpls.com/auth/admin/realms/eqpls/clients/7f35ab03-dd39-470d-8f38-b8bd44af7a87/client-secret
 
         await self.put(f'/admin/realms/{realm}', {
             'accessTokenLifespan': 1800,
@@ -260,6 +256,13 @@ class KeyCloak(DriverBase):
     async def deleteRealm(self, realm:str):
         await self.delete(f'/admin/realms/{realm}')
         return True
+
+    async def getClientSecret(self, realm:str, clientId:str):
+        for client in await self.get(f'/admin/realms/{realm}/clients'):
+            if client['clientId'] == clientId:
+                if 'secret' in client: return client['secret']
+                else: return None
+        return None
 
     # Group ####################################################################
     async def readGroup(self, realm:str, groupId:str):

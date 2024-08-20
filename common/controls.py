@@ -169,6 +169,8 @@ class UerpControl(BaseControl):
             )
             await self._auth.connect()
 
+            self.api.add_api_route(methods=['GET'], path='/internal/client/secret', endpoint=self.__get_client_secret__, response_model=str, tags=['Internal Only'], name=f'Get Client Secret')
+
     async def __shutdown__(self):
         self._refreshAuth = False
         await BaseControl.__shutdown__(self)
@@ -226,6 +228,13 @@ class UerpControl(BaseControl):
                 self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.__delete_data_with_free__, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
 
         return self
+
+    async def __get_client_secret__(
+        self,
+        org:str,
+        client:str
+    ):
+        return await self._auth._authKeyCloak.getClientSecret(realm=org, clientId=client)
 
     async def __read_data_with_auth__(
         self,
