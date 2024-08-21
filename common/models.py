@@ -245,7 +245,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if type(schemaInfo.provider) == str:
             if CRUD.checkRead(schemaInfo.crud):
                 headers = {}
-                if token: headers['Authorization'] = f'Bearer {token.credentials}'
+                if token: headers['Authorization'] = f'Bearer {token}'
                 if org: headers['Organization'] = org
                 async with AsyncRest(schemaInfo.provider) as rest: return self.__class__(**(await rest.get(self.uref, headers=headers)))
             else: raise EpException(405, 'Method Not Allowed')
@@ -258,7 +258,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if type(schemaInfo.provider) == str:
             if CRUD.checkRead(schemaInfo.crud):
                 headers = {}
-                if token: headers['Authorization'] = f'Bearer {token.credentials}'
+                if token: headers['Authorization'] = f'Bearer {token}'
                 if org: headers['Organization'] = org
                 async with AsyncRest(schemaInfo.provider) as rest: return cls(**(await rest.get(f'{schemaInfo.path}/{id}', headers=headers)))
             else: raise EpException(405, 'Method Not Allowed')
@@ -280,7 +280,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if type(schemaInfo.provider) == str:
             if CRUD.checkRead(schemaInfo.crud):
                 headers = {}
-                if token: headers['Authorization'] = f'Bearer {token.credentials}'
+                if token: headers['Authorization'] = f'Bearer {token}'
                 if org: headers['Organization'] = org
                 query = {}
                 if filter: query['$filter'] = filter
@@ -310,7 +310,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if type(schemaInfo.provider) == str:
             if CRUD.checkRead(schemaInfo.crud):
                 headers = {}
-                if token: headers['Authorization'] = f'Bearer {token.credentials}'
+                if token: headers['Authorization'] = f'Bearer {token}'
                 if org: headers['Organization'] = org
                 query = {}
                 if filter: query['$filter'] = filter
@@ -329,7 +329,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if type(schemaInfo.provider) == str:
             if CRUD.checkCreate(schemaInfo.crud):
                 headers = {}
-                if token: headers['Authorization'] = f'Bearer {token.credentials}'
+                if token: headers['Authorization'] = f'Bearer {token}'
                 if org: headers['Organization'] = org
                 self.id = _EMPTY_UUID
                 async with AsyncRest(schemaInfo.provider) as rest: model = await rest.post(f'{schemaInfo.path}', headers=headers, json=self.model_dump())
@@ -346,7 +346,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if type(schemaInfo.provider) == str:
             if CRUD.checkUpdate(schemaInfo.crud):
                 headers = {}
-                if token: headers['Authorization'] = f'Bearer {token.credentials}'
+                if token: headers['Authorization'] = f'Bearer {token}'
                 if org: headers['Organization'] = org
                 async with AsyncRest(schemaInfo.provider) as rest: model = await rest.put(f'{schemaInfo.path}/{self.id}', headers=headers, json=self.model_dump())
                 return self.__class__(**model)
@@ -362,7 +362,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if type(schemaInfo.provider) == str:
             if CRUD.checkDelete(schemaInfo.crud):
                 headers = {}
-                if token: headers['Authorization'] = f'Bearer {token.credentials}'
+                if token: headers['Authorization'] = f'Bearer {token}'
                 if org: headers['Organization'] = org
                 force = '?$force=true' if force else ''
                 async with AsyncRest(schemaInfo.provider) as rest: status = await rest.delete(f'{schemaInfo.path}/{self.id}{force}', headers=headers)
@@ -379,7 +379,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if type(schemaInfo.provider) == str:
             if CRUD.checkDelete(schemaInfo.crud):
                 headers = {}
-                if token: headers['Authorization'] = f'Bearer {token.credentials}'
+                if token: headers['Authorization'] = f'Bearer {token}'
                 if org: headers['Organization'] = org
                 force = '?$force=true' if force else ''
                 async with AsyncRest(schemaInfo.provider) as rest: status = await rest.delete(f'{schemaInfo.path}/{id}{force}', headers=headers)

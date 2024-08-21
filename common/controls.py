@@ -111,12 +111,13 @@ class MeshControl(BaseControl):
 
     def __init__(self, modPath, background:bool=False):
         BaseControl.__init__(self, modPath, background)
-        if 'providers' not in self.config: raise Exception('[providers] configuration is not in project.ini')
-        self._providers = self.config['providers']
 
     async def registerModel(self, schema:BaseSchema, service):
-        if service not in self._providers: raise Exception(f'{service} is not in [providers] configuration')
-        schema.setSchemaInfo(self._providers[service], service, self._version)
+        if service not in self.config: raise Exception(f'{service} is not in configuration')
+        config = self.config[service]
+        hostname = config['hostname']
+        port = config['port']
+        schema.setSchemaInfo(f'http://{hostname}:{port}', service, self._version)
         return self
 
 

@@ -50,7 +50,7 @@ class AuthKeyCloakRedis(AuthDriverBase):
         await self._authKeyCloak.connect()
         await self._authRedis.connect()
 
-        if not await Org.searchModels(filter=f'name:{self._authDefaultOrg}'):
+        if not await Org.searchModels(filter=f'name:{self._authDefaultOrg}', archive=True):
             await Org(
                 org=self._authDefaultOrg,
                 name=self._authDefaultOrg,

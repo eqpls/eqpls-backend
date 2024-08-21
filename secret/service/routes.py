@@ -84,7 +84,7 @@ async def create_ca_certification(
         csr=req.csr,
         key=crypto.dump_privatekey(crypto.FILETYPE_PEM, ca_key).decode('utf-8'),
         crt=crypto.dump_certificate(crypto.FILETYPE_PEM, ca_cert).decode('utf-8')
-    ).createModel(token=token, org=org)
+    ).createModel(token=token.credentials, org=org)
 
 
 @api.get(f'{ctrl.uri}/certification/authority/{{id}}/key', tags=['Certification'])
@@ -93,7 +93,7 @@ async def download_ca_certification_key(
     token: AUTH_HEADER,
     org: ORG_HEADER=None
 ) -> PlainTextResponse:
-    cert = await Authority.readModelByID(id, token=token, org=org)
+    cert = await Authority.readModelByID(id, token=token.credentials, org=org)
     return PlainTextResponse(cert.key)
 
 
@@ -103,7 +103,7 @@ async def download_ca_certification_crt(
     token: AUTH_HEADER,
     org: ORG_HEADER=None
 ) -> PlainTextResponse:
-    cert = await Authority.readModelByID(id, token=token, org=org)
+    cert = await Authority.readModelByID(id, token=token.credentials, org=org)
     return PlainTextResponse(cert.crt)
 
 
@@ -169,7 +169,7 @@ async def create_server_certification(
         ca=caCert.getReference(),
         key=crypto.dump_privatekey(crypto.FILETYPE_PEM, server_key).decode('utf-8'),
         crt=crypto.dump_certificate(crypto.FILETYPE_PEM, server_cert).decode('utf-8')
-    ).createModel(token=token, org=org)
+    ).createModel(token=token.credentials, org=org)
 
 
 @api.get(f'{ctrl.uri}/certification/server/{{id}}/key', tags=['Certification'])
@@ -178,7 +178,7 @@ async def download_server_certification_key(
     token: AUTH_HEADER,
     org: ORG_HEADER=None
 ) -> PlainTextResponse:
-    cert = await Authority.readModelByID(id, token=token, org=org)
+    cert = await Authority.readModelByID(id, token=token.credentials, org=org)
     return PlainTextResponse(cert.key)
 
 
@@ -188,7 +188,7 @@ async def download_server_certification_crt(
     token: AUTH_HEADER,
     org: ORG_HEADER=None
 ) -> PlainTextResponse:
-    cert = await Authority.readModelByID(id, token=token, org=org)
+    cert = await Authority.readModelByID(id, token=token.credentials, org=org)
     return PlainTextResponse(cert.crt)
 
 
@@ -220,7 +220,7 @@ async def create_rsa(
             encoding=serialization.Encoding.OpenSSH,
             format=serialization.PublicFormat.OpenSSH
         ).decode('utf-8')
-    ).createModel(token=token, org=org)
+    ).createModel(token=token.credentials, org=org)
 
 
 @api.get(f'{ctrl.uri}/access/openssh/{{id}}/privatekey', tags=['Remote Access'])
@@ -229,7 +229,7 @@ async def download_openssh_private_crt(
     token: AUTH_HEADER,
     org: ORG_HEADER=None
 ) -> PlainTextResponse:
-    keys = await OpenSsh.readModelByID(id, token=token, org=org)
+    keys = await OpenSsh.readModelByID(id, token=token.credentials, org=org)
     return PlainTextResponse(keys.pri)
 
 
@@ -239,5 +239,5 @@ async def download_openssh_public_key(
     token: AUTH_HEADER,
     org: ORG_HEADER=None
 ) -> PlainTextResponse:
-    keys = await OpenSsh.readModelByID(id, token=token, org=org)
+    keys = await OpenSsh.readModelByID(id, token=token.credentials, org=org)
     return PlainTextResponse(keys.pub)
