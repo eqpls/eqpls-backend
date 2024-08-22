@@ -31,7 +31,9 @@ class Control(MeshControl):
     async def sendWSockData(self, username, key, value):
         if username not in self._sockets: return None
         payload = {'k': key, 'v': value}
-        for socket in self._sockets[username]: socket.send_json(payload)
+        for socket in self._sockets[username]:
+            try: socket.send_json(payload)
+            except: pass
         return payload
 
     async def registerWSockConnection(self, socket, token, org):
