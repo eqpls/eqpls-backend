@@ -7,7 +7,6 @@ Equal Plus
 #===============================================================================
 # Import
 #===============================================================================
-import os
 import random
 
 from OpenSSL import crypto
@@ -27,7 +26,7 @@ from schema.secret.access import OpenSsh, OpenSsshRequest
 #===============================================================================
 # SingleTone
 #===============================================================================
-ctrl = Control(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ctrl = Control(__file__)
 api = ctrl.api
 
 
@@ -36,9 +35,9 @@ api = ctrl.api
 #===============================================================================
 @api.post(f'{ctrl.uri}/certification/authority', tags=['Certification'])
 async def create_ca_certification(
-    req: AuthorityRequest,
+    org: ORG_HEADER,
     token: AUTH_HEADER,
-    org: ORG_HEADER=None
+    req: AuthorityRequest
 ) -> Authority:
     if not req.displayName: raise EpException(400, 'displayName is required')
     if not req.csr.countryName: raise Exception('countryName is required')
@@ -84,34 +83,34 @@ async def create_ca_certification(
         csr=req.csr,
         key=crypto.dump_privatekey(crypto.FILETYPE_PEM, ca_key).decode('utf-8'),
         crt=crypto.dump_certificate(crypto.FILETYPE_PEM, ca_cert).decode('utf-8')
-    ).createModel(token=token.credentials, org=org)
+    ).createModel(org=org, token=token.credentials)
 
 
 @api.get(f'{ctrl.uri}/certification/authority/{{id}}/key', tags=['Certification'])
 async def download_ca_certification_key(
-    id: ID,
+    org: ORG_HEADER,
     token: AUTH_HEADER,
-    org: ORG_HEADER=None
+    id: ID
 ) -> PlainTextResponse:
-    cert = await Authority.readModelByID(id, token=token.credentials, org=org)
+    cert = await Authority.readModelByID(id, org=org, token=token.credentials)
     return PlainTextResponse(cert.key)
 
 
 @api.get(f'{ctrl.uri}/certification/authority/{{id}}/crt', tags=['Certification'])
 async def download_ca_certification_crt(
-    id: ID,
+    org: ORG_HEADER,
     token: AUTH_HEADER,
-    org: ORG_HEADER=None
+    id: ID
 ) -> PlainTextResponse:
-    cert = await Authority.readModelByID(id, token=token.credentials, org=org)
+    cert = await Authority.readModelByID(id, org=org, token=token.credentials)
     return PlainTextResponse(cert.crt)
 
 
 @api.post(f'{ctrl.uri}/certification/server', tags=['Certification'])
 async def create_server_certification(
-    req: ServerRequest,
+    org: ORG_HEADER,
     token: AUTH_HEADER,
-    org: ORG_HEADER=None
+    req: ServerRequest
 ) -> Server:
     if not req.authorityId: raise EpException(400, 'authorityId is required')
     if not req.displayName: raise EpException(400, 'displayName is required')
@@ -169,34 +168,34 @@ async def create_server_certification(
         ca=caCert.getReference(),
         key=crypto.dump_privatekey(crypto.FILETYPE_PEM, server_key).decode('utf-8'),
         crt=crypto.dump_certificate(crypto.FILETYPE_PEM, server_cert).decode('utf-8')
-    ).createModel(token=token.credentials, org=org)
+    ).createModel(org=org, token=token.credentials)
 
 
 @api.get(f'{ctrl.uri}/certification/server/{{id}}/key', tags=['Certification'])
 async def download_server_certification_key(
-    id: ID,
+    org: ORG_HEADER,
     token: AUTH_HEADER,
-    org: ORG_HEADER=None
+    id: ID
 ) -> PlainTextResponse:
-    cert = await Authority.readModelByID(id, token=token.credentials, org=org)
+    cert = await Authority.readModelByID(id, org=org, token=token.credentials)
     return PlainTextResponse(cert.key)
 
 
 @api.get(f'{ctrl.uri}/certification/server/{{id}}/crt', tags=['Certification'])
 async def download_server_certification_crt(
-    id: ID,
+    org: ORG_HEADER,
     token: AUTH_HEADER,
-    org: ORG_HEADER=None
+    id: ID
 ) -> PlainTextResponse:
-    cert = await Authority.readModelByID(id, token=token.credentials, org=org)
+    cert = await Authority.readModelByID(id, org=org, token=token.credentials)
     return PlainTextResponse(cert.crt)
 
 
 @api.post(f'{ctrl.uri}/access/openssh', tags=['Remote Access'])
 async def create_rsa(
-    req: OpenSsshRequest,
+    org: ORG_HEADER,
     token: AUTH_HEADER,
-    org: ORG_HEADER=None
+    req: OpenSsshRequest
 ) -> OpenSsh:
     if not req.displayName: raise EpException(400, 'displayName is required')
     if not req.rsaBits: req.rsaBits = 4096
@@ -220,24 +219,24 @@ async def create_rsa(
             encoding=serialization.Encoding.OpenSSH,
             format=serialization.PublicFormat.OpenSSH
         ).decode('utf-8')
-    ).createModel(token=token.credentials, org=org)
+    ).createModel(org=org, token=token.credentials)
 
 
 @api.get(f'{ctrl.uri}/access/openssh/{{id}}/privatekey', tags=['Remote Access'])
 async def download_openssh_private_crt(
-    id: ID,
+    org: ORG_HEADER,
     token: AUTH_HEADER,
-    org: ORG_HEADER=None
+    id: ID
 ) -> PlainTextResponse:
-    keys = await OpenSsh.readModelByID(id, token=token.credentials, org=org)
+    keys = await OpenSsh.readModelByID(id, org=org, token=token.credentials)
     return PlainTextResponse(keys.pri)
 
 
 @api.get(f'{ctrl.uri}/access/openssh/{{id}}/publickey', tags=['Remote Access'])
 async def download_openssh_public_key(
-    id: ID,
+    org: ORG_HEADER,
     token: AUTH_HEADER,
-    org: ORG_HEADER=None
+    id: ID
 ) -> PlainTextResponse:
-    keys = await OpenSsh.readModelByID(id, token=token.credentials, org=org)
+    keys = await OpenSsh.readModelByID(id, org=org, token=token.credentials)
     return PlainTextResponse(keys.pub)

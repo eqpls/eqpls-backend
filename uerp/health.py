@@ -16,15 +16,14 @@ import configparser
 #===============================================================================
 try:
     modPath = os.path.dirname(os.path.abspath(__file__))
+    prjPath = os.path.dirname(modPath)
     module = os.path.basename(modPath)
-    prjPath = os.path.abspath(f'{modPath}/..')
-    iniPath = os.path.abspath(f'{prjPath}/project.ini')
 
     config = configparser.ConfigParser()
-    config.read(iniPath, encoding='utf-8')
+    config.read(f'{prjPath}/project.ini', encoding='utf-8')
 
-    port = config[module]['port']
-    res = requests.get(f'http://localhost:{port}/{module}/health')
+    hostport = config[module]['hostport']
+    res = requests.get(f'http://localhost:{hostport}/internal/health')
     res.raise_for_status()
     result = res.json()
     if not result['healthy']: raise Exception()

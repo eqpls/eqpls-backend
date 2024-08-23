@@ -36,11 +36,11 @@ class AuthDriverBase(DriverBase):
 
     async def deleteOrg(self, org:dict): return org
 
-    async def createPolicy(self, policy:dict): return policy
+    async def createRole(self, role:dict): return role
 
-    async def updatePolicy(self, policy:dict): return policy
+    async def updateRole(self, role:dict): return role
 
-    async def deletePolicy(self, policy:dict): return policy
+    async def deleteRole(self, role:dict): return role
 
     async def createGroup(self, group:dict): return group
 

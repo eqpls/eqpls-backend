@@ -23,7 +23,7 @@ class RedisAuthn(KeyValueDriverBase):
     def __init__(self, config):
         ModelDriverBase.__init__(self, config)
         self._redisHostname = config['redis']['hostname']
-        self._redisHostport = int(config['redis']['port'])
+        self._redisHostport = int(config['redis']['hostport'])
         self._redisDatabase = int(config['redis:authn']['database'])
         self._redisExpire = int(config['redis:authn']['expire'])
         self._redisConn = None
@@ -63,7 +63,7 @@ class RedisQueue(NetworkDriverBase):
     def __init__(self, config):
         ModelDriverBase.__init__(self, config)
         self._redisHostname = config['redis']['hostname']
-        self._redisHostport = int(config['redis']['port'])
+        self._redisHostport = int(config['redis']['hostport'])
         self._redisDatabase = int(config['redis:queue']['database'])
         self._redisExpire = int(config['redis:queue']['expire'])
         self._redisConn = None
@@ -96,7 +96,7 @@ class RedisModel(ModelDriverBase):
     def __init__(self, config):
         ModelDriverBase.__init__(self, config)
         self._redisHostname = config['redis']['hostname']
-        self._redisHostport = int(config['redis']['port'])
+        self._redisHostport = int(config['redis']['hostport'])
         self._redisDatabase = int(config['redis:model']['database'])
         self._redisExpire = int(config['redis:model']['expire'])
         self._redisConn = None

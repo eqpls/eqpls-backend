@@ -63,16 +63,16 @@ class CRUD:
     CRUD = 15
 
     @classmethod
-    def checkCreate(cls, crud): return crud & 1
+    def checkCreate(cls, crud): return True if crud & 1 else False
 
     @classmethod
-    def checkRead(cls, crud): return crud & 2
+    def checkRead(cls, crud): return True if crud & 2 else False
 
     @classmethod
-    def checkUpdate(cls, crud): return crud & 4
+    def checkUpdate(cls, crud): return True if crud & 4 else False
 
     @classmethod
-    def checkDelete(cls, crud): return crud & 8
+    def checkDelete(cls, crud): return True if crud & 8 else False
 
 
 class LAYER:
@@ -105,20 +105,24 @@ class AAA:
 
     FREE = 0
 
-    A = 1
-    AA = 101
-    AAA = 1001
+    A = 1  # 0001
+    AA = 3  # 0011
+    AAG = 7  # 0111
+    AAA = 11  # 1011
 
     @classmethod
     def checkAuthorization(cls, aaa): return True if aaa > 0 else False
 
     @classmethod
-    def checkAuthentication(cls, aaa): return True if aaa > 100 else False
+    def checkAuthentication(cls, aaa): return True if aaa > 1 else False
 
     @classmethod
-    def checkAccount(cls, aaa): return True if aaa > 1000 else False
+    def checkGroup(cls, aaa): return True if aaa == 7 else False
+
+    @classmethod
+    def checkAccount(cls, aaa): return True if aaa == 11 else False
 
 
-ORG_HEADER = Annotated[str | None, Depends(APIKeyHeader(name='Organization', auto_error=False))]
+ORG_HEADER = Annotated[str | None, Depends(APIKeyHeader(name='Org', auto_error=False))]
 
 AUTH_HEADER = Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())]

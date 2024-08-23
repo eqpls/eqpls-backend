@@ -30,7 +30,7 @@ class ElasticSearch(ModelDriverBase):
         self._esPassword = config['default']['system_secret_key']
 
         self._esHostname = config['elasticsearch']['hostname']
-        self._esHostport = int(config['elasticsearch']['port'])
+        self._esHostport = int(config['elasticsearch']['hostport'])
 
         self._esShards = int(config['elasticsearch']['shards'])
         self._esReplicas = int(config['elasticsearch']['replicas'])

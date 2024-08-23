@@ -18,8 +18,8 @@ from schema.secret.access import OpenSsh
 #===============================================================================
 class Control(MeshControl):
 
-    def __init__(self, modPath):
-        MeshControl.__init__(self, modPath)
+    def __init__(self, path):
+        MeshControl.__init__(self, path, sessionChecker='uerp')
 
     async def startup(self):
         await self.registerModel(Authority, 'uerp')

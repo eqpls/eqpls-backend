@@ -1,9 +1,14 @@
 #!/bin/sh
 
-# eqpls
+# eqpls #########################
+UERP_ENDPOINT="uerp:8080"
+ORGANIZATION="eqpls"
+
 echo -n "export MINIO_IDENTITY_OPENID_CLIENT_SECRET_PRIMARY_IAM=" > /client_secret
-curl -s "http://uerp:8090/internal/client/secret?org=eqpls&client=minio" >> /client_secret
+curl -s "http://$UERP_ENDPOINT/internal/client/secret?org=$ORGANIZATION&client=minio" >> /client_secret
 . /client_secret
+echo "MINIO_IDENTITY_OPENID_CLIENT_SECRET=$MINIO_IDENTITY_OPENID_CLIENT_SECRET_PRIMARY_IAM"
+######################### eqpls #
 
 # If command starts with an option, prepend minio.
 if [ "${1}" != "minio" ]; then

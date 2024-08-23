@@ -23,10 +23,10 @@ from schema.secret.access import OpenSsh
 #===============================================================================
 class Control(UerpControl):
 
-    def __init__(self, modPath):
+    def __init__(self, path):
         UerpControl.__init__(
             self,
-            modPath=modPath,
+            path=path,
             authDriver=AuthKeyCloakRedis,
             cacheDriver=RedisModel,
             searchDriver=ElasticSearch,

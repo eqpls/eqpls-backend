@@ -30,7 +30,7 @@ class PostgreSql(ModelDriverBase):
         self._psqlPassword = config['default']['system_secret_key']
 
         self._psqlHostname = config['postgresql']['hostname']
-        self._psqlHostport = int(config['postgresql']['port'])
+        self._psqlHostport = int(config['postgresql']['hostport'])
         self._psqlDatabase = config['postgresql']['database']
 
         self._psql = None

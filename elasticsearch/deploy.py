@@ -23,9 +23,9 @@ def parameters(module, path, config):
     health_check_retries = int(default['health_check_retries'])
 
     hostname = modconf['hostname']
-    host = modconf['host']
-    port = int(modconf['port'])
-    export = True if modconf['export'].lower() == 'true' else False
+    hostaddr = modconf['hostaddr']
+    hostport = int(modconf['hostport'])
+    export = int(modconf['export']) if modconf['export'] and modconf['export'].lower() != 'false' else None
     memory = modconf['memory']
 
     environment = [
@@ -33,7 +33,7 @@ def parameters(module, path, config):
     ]
 
     ports = {
-        f'{port}/tcp': (host, port)
+        f'{hostport}/tcp': (hostaddr, hostport)
     } if export else {}
 
     volumes = [

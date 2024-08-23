@@ -21,7 +21,8 @@ class AuthInfo(BaseModel):
     org: str = ''
     username: str = ''
     admin: bool = False
-    policy: list[str] = []
+    roles: list[str] = []
+    groups: list[str] = []
     aclRead: list[str] = []
     aclCreate: list[str] = []
     aclUpdate: list[str] = []
@@ -31,11 +32,11 @@ class AuthInfo(BaseModel):
 
     def checkUsername(self, username): return True if self.username == username else False
 
-    def checkAccount(self, realm, username): return True if self.realm == realm and self.owner == username else False
-
     def checkAdmin(self): return self.admin
 
-    def checkPolicy(self, policy): return True if policy in self.policy else False
+    def checkRole(self, role): return True if role in self.roles else False
+
+    def checkGroup(self, group): return True if group in self.groups else False
 
     def checkReadACL(self, sref): return True if sref in self.aclRead else False
 
@@ -71,7 +72,8 @@ class Account(BaseModel, BaseSchema):
     givenName: str = ''
     familyName: str = ''
     email: str = ''
-    policy: list[str] = []
+    roles: list[str] = []
+    groups: list[str] = []
     detail: Reference = EmptyReference
 
 
@@ -80,10 +82,10 @@ version=1,
 aaa=AAA.AA,
 cache=Option(expire=SECONDS.HOUR),
 search=Option(expire=SECONDS.DAY))
-class Policy(BaseModel, ProfSchema, BaseSchema):
+class Role(BaseModel, ProfSchema, BaseSchema):
 
+    admin:bool = False
     externalId:Key = ''
-
     aclRead: list[str] = []
     aclCreate: list[str] = []
     aclUpdate: list[str] = []

@@ -7,9 +7,11 @@ Equal Plus
 #===============================================================================
 # Import
 #===============================================================================
+import traceback
+
 from fastapi import WebSocketDisconnect
 
-from common import MeshControl, AsyncRest
+from common import MeshControl
 
 
 #===============================================================================
@@ -17,39 +19,47 @@ from common import MeshControl, AsyncRest
 #===============================================================================
 class Control(MeshControl):
 
-    def __init__(self, modPath):
-        MeshControl.__init__(self, modPath)
-        kcHostname = self.config['keycloak']['hostname']
-        kcHostport = self.config['keycloak']['port']
-        self._kcBaseUrl = f'http://{kcHostname}:{kcHostport}'
-        self._sockets = {}
+    def __init__(self, path):
+        MeshControl.__init__(self, path, sessionChecker='uerp')
+        self.sockets = {}
 
     async def startup(self): pass
 
     async def shutdown(self): pass
 
-    async def sendWSockData(self, username, key, value):
-        if username not in self._sockets: return None
-        payload = {'k': key, 'v': value}
-        for socket in self._sockets[username]:
-            try: socket.send_json(payload)
-            except: pass
-        return payload
+    def createWSockPayload(self, key, value): return [key, value]
 
-    async def registerWSockConnection(self, socket, token, org):
-        async with AsyncRest(self._kcBaseUrl) as rest:
-            userinfo = await rest.get(f'/realms/{org}/protocol/openid-connect/userinfo', headers={'Authorization': f'Bearer {token}'})
-        username = userinfo['preferred_username']
+    async def sendWSockData(self, username, payload):
+        if username in self.sockets:
+            for socket in self.sockets[username]:
+                try: await socket.send_json(payload)
+                except: pass
+
+    async def registerWSockConnection(self, socket):
         await socket.accept()
-        if username not in self._sockets: self._sockets[username] = []
-        self._sockets[username].append(socket)
-        while True:
-            try: await self.parseWSockData(token, org, await socket.receive_json())
-            except WebSocketDisconnect:
-                self._sockets[username].remove(socket)
-                break
+        try: key, value = await socket.receive_json()
+        except: await socket.close()
+        else:
+            if key == 'auth':
+                try:
+                    org = value['org']
+                    token = value['token']
+                    authInfo = await self.checkAuthInfo(org, token)
+                    username = authInfo.username
+                except:
+                    traceback.print_exc()
+                    await socket.close()
+                else:
+                    if username not in self.sockets: self.sockets[username] = []
+                    self.sockets[username].append(socket)
+                    while True:
+                        try: await self.parseWSockData(org, token, authInfo, await socket.receive_json())
+                        except WebSocketDisconnect:
+                            self.sockets[username].remove(socket)
+                            break
+                        except: traceback.print_exc()
+            else: await socket.close()
 
-    async def parseWSockData(self, token, org, data):
-        key = data['k']
-        value = data['v']
-        for username in self._sockets.keys(): self.sendWSockData(username, key, value)
+    async def parseWSockData(self, org, token, authInfo, data):
+        key, value = data
+        await self.sendWSockData(authInfo.username, self.createWSockPayload(key, value))

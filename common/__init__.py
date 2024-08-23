@@ -24,7 +24,7 @@ from .models import ID, Key, EmptyReference
 from .models import IdentSchema, StatusSchema, BaseSchema, ProfSchema, TagSchema, MetaSchema
 from .models import ServiceHealth, ModelStatus, ModelCount, Reference
 
-from .auth import AuthInfo, Org, Account, Policy, Group
+from .auth import AuthInfo, Org, Account, Role, Group
 
 from .controls import BaseControl, MeshControl, UerpControl
 

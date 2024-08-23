@@ -23,7 +23,7 @@ class KeyCloak(DriverBase):
         self._kcPassword = config['default']['system_secret_key']
 
         self._kcHostname = config['keycloak']['hostname']
-        self._kcHostport = int(config['keycloak']['port'])
+        self._kcHostport = int(config['keycloak']['hostport'])
 
         self._kcFrontend = f'https://{self._kcEndpoint}'
         self._kcBaseUrl = f'http://{self._kcHostname}:{self._kcHostport}'
@@ -139,12 +139,29 @@ class KeyCloak(DriverBase):
             if scope['name'] == 'openid-client-scope': scopeId = scope['id']; break
         else: raise EpException(404, 'Could not find client scope')
         await self.post(f'/admin/realms/{realm}/client-scopes/{scopeId}/protocol-mappers/models', {
-            'name': 'policy',
+            'name': 'roles',
             'protocol': 'openid-connect',
             'protocolMapper': 'oidc-usermodel-attribute-mapper',
             'config': {
-                'claim.name': 'policy',
-                'user.attribute': 'policy',
+                'claim.name': 'roles',
+                'user.attribute': 'roles',
+                'jsonType.label': 'String',
+                'multivalued': True,
+                'aggregate.attrs': True,
+                'id.token.claim': True,
+                'access.token.claim': True,
+                'lightweight.claim': False,
+                'userinfo.token.claim': True,
+                'introspection.token.claim': True
+            }
+        })
+        await self.post(f'/admin/realms/{realm}/client-scopes/{scopeId}/protocol-mappers/models', {
+            'name': 'groups',
+            'protocol': 'openid-connect',
+            'protocolMapper': 'oidc-usermodel-attribute-mapper',
+            'config': {
+                'claim.name': 'groups',
+                'user.attribute': 'groups',
                 'jsonType.label': 'String',
                 'multivalued': True,
                 'aggregate.attrs': True,

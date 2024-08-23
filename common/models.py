@@ -125,6 +125,7 @@ class SchemaInfo(BaseModel):
     major:int = 1
     minor:int = 1
     name:str = ''
+    description:str = ''
     module:str = ''
     sref:str = ''
     dref:str = ''
@@ -136,9 +137,9 @@ class SchemaInfo(BaseModel):
     cache:Any | None = None
     search:Any | None = None
     database:Any | None = None
-    createProcess:Any | None = None
-    updateProcess:Any | None = None
-    deleteProcess:Any | None = None
+    createHandler:Any | None = None
+    updateHandler:Any | None = None
+    deleteHandler:Any | None = None
 
 
 _TypeT = TypeVar('_TypeT', bound=type)
@@ -146,6 +147,7 @@ _TypeT = TypeVar('_TypeT', bound=type)
 
 def SchemaConfig(
     version:int,
+    description:str='',
     crud:int=CRUD.CRUD,
     layer:int=LAYER.CSD,
     aaa:int=AAA.FREE,
@@ -165,6 +167,7 @@ def SchemaConfig(
             schemaInfo=SchemaInfo(
                 minor=version,
                 name=name,
+                description=description,
                 module=module,
                 sref=sref,
                 tags=tags,
@@ -219,7 +222,7 @@ class BaseSchema(StatusSchema, IdentSchema):
     # schema info
     #===========================================================================
     @classmethod
-    def setSchemaInfo(cls, provider, service, version, createProcess=None, updateProcess=None, deleteProcess=None):
+    def setSchemaInfo(cls, provider, service, version, createHandler=None, updateHandler=None, deleteHandler=None):
         schemaInfo = cls.getSchemaInfo()
         schemaInfo.provider = provider
         schemaInfo.service = service
@@ -227,9 +230,9 @@ class BaseSchema(StatusSchema, IdentSchema):
         lowerSchemaRef = schemaInfo.sref.lower()
         schemaInfo.dref = snakecase(f'{lowerSchemaRef}.{version}.{schemaInfo.minor}')
         schemaInfo.path = f'/{service}/' + pathcase(f'v{version}.{lowerSchemaRef}')
-        if createProcess: schemaInfo.createProcess = createProcess
-        if updateProcess: schemaInfo.updateProcess = updateProcess
-        if deleteProcess: schemaInfo.deleteProcess = deleteProcess
+        if createHandler: schemaInfo.createHandler = createHandler
+        if updateHandler: schemaInfo.updateHandler = updateHandler
+        if deleteHandler: schemaInfo.deleteHandler = deleteHandler
         if '__pydantic_config__' not in Reference.__dict__: Reference.__pydantic_config__ = ConfigDict(schemaMap={})
         Reference.__pydantic_config__['schemaMap'][schemaInfo.sref] = cls
 
@@ -239,7 +242,11 @@ class BaseSchema(StatusSchema, IdentSchema):
     #===========================================================================
     # crud
     #===========================================================================
-    async def readModel(self, token=None, org=None):
+    async def readModel(
+        self,
+        org=None,
+        token=None
+    ):
         if not self.id: raise EpException(400, 'Bad Request')
         schemaInfo = self.__class__.getSchemaInfo()
         if type(schemaInfo.provider) == str:
@@ -253,7 +260,12 @@ class BaseSchema(StatusSchema, IdentSchema):
         else: raise EpException(501, 'Not Implemented')
 
     @classmethod
-    async def readModelByID(cls, id:ID, token=None, org=None):
+    async def readModelByID(
+        cls,
+        id:ID,
+        org=None,
+        token=None
+    ):
         schemaInfo = cls.getSchemaInfo()
         if type(schemaInfo.provider) == str:
             if CRUD.checkRead(schemaInfo.crud):
@@ -273,8 +285,8 @@ class BaseSchema(StatusSchema, IdentSchema):
         size:int | None=None,
         skip:int | None=None,
         archive:bool | None=None,
-        token=None,
-        org=None
+        org=None,
+        token=None
     ):
         schemaInfo = cls.getSchemaInfo()
         if type(schemaInfo.provider) == str:
@@ -303,8 +315,8 @@ class BaseSchema(StatusSchema, IdentSchema):
     async def countModels(cls,
         filter:str | None=None,
         archive:bool | None=None,
-        token=None,
-        org=None
+        org=None,
+        token=None
     ):
         schemaInfo = cls.getSchemaInfo()
         if type(schemaInfo.provider) == str:
@@ -324,7 +336,11 @@ class BaseSchema(StatusSchema, IdentSchema):
             return await schemaInfo.provider.countModels(cls, Search(filter=filter), archive)
         else: raise EpException(501, 'Not Implemented')
 
-    async def createModel(self, token=None, org=None):
+    async def createModel(
+        self,
+        org=None,
+        token=None
+    ):
         schemaInfo = self.__class__.getSchemaInfo()
         if type(schemaInfo.provider) == str:
             if CRUD.checkCreate(schemaInfo.crud):
@@ -340,7 +356,11 @@ class BaseSchema(StatusSchema, IdentSchema):
             return await self.__class__.readModelByID(self.id)
         else: raise EpException(501, 'Not Implemented')
 
-    async def updateModel(self, token=None, org=None):
+    async def updateModel(
+        self,
+        org=None,
+        token=None
+    ):
         if not self.id: raise EpException(400, 'Bad Request')
         schemaInfo = self.__class__.getSchemaInfo()
         if type(schemaInfo.provider) == str:
@@ -356,7 +376,12 @@ class BaseSchema(StatusSchema, IdentSchema):
             return await self.__class__.readModelByID(self.id)
         else: raise EpException(501, 'Not Implemented')
 
-    async def deleteModel(self, force=False, token=None, org=None):
+    async def deleteModel(
+        self,
+        force=False,
+        org=None,
+        token=None
+    ):
         if not self.id: raise EpException(400, 'Bad Request')
         schemaInfo = self.__class__.getSchemaInfo()
         if type(schemaInfo.provider) == str:
@@ -374,7 +399,13 @@ class BaseSchema(StatusSchema, IdentSchema):
         else: raise EpException(501, 'Not Implemented')
 
     @classmethod
-    async def deleteModelByID(cls, id:ID, force=False, token=None, org=None):
+    async def deleteModelByID(
+        cls,
+        id:ID,
+        force=False,
+        org=None,
+        token=None
+    ):
         schemaInfo = cls.getSchemaInfo()
         if type(schemaInfo.provider) == str:
             if CRUD.checkDelete(schemaInfo.crud):

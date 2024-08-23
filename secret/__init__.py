@@ -32,8 +32,8 @@ def run():
 
     uvicorn.run(
         'service.routes:api',
-        host=modConf['host'],
-        port=int(modConf['port']),
+        host=modConf['hostaddr'],
+        port=int(modConf['hostport']),
         loop='uvloop' if 'container' in modConf['runtime'] else 'auto',
         workers=int(modConf['workers']) if 'dev' not in stage else None,
         reload=True if 'dev' in stage else False,

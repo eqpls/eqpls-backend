@@ -23,19 +23,19 @@ def parameters(module, path, config):
     health_check_retries = int(default['health_check_retries'])
 
     hostname = modconf['hostname']
-    host = modconf['host']
-    port = int(modconf['port'])
-    export = True if modconf['export'].lower() == 'true' else False
+    hostaddr = modconf['hostaddr']
+    hostport = int(modconf['hostport'])
+    export = int(modconf['export']) if modconf['export'] and modconf['export'].lower() != 'false' else None
     memory = modconf['memory']
 
     guacd_hostname = config['guacd']['hostname']
-    guacd_hostport = config['guacd']['port']
+    guacd_hostport = config['guacd']['hostport']
 
     database_hostname = config['postgresql']['hostname']
-    database_hostport = config['postgresql']['port']
+    database_hostport = config['postgresql']['hostport']
 
     kc_hostname = config['keycloak']['hostname']
-    kc_hostport = config['keycloak']['port']
+    kc_hostport = config['keycloak']['hostport']
     kc_auth_endpoint = f'https://{endpoint}/auth/realms/{tenant}/protocol/openid-connect/auth'
     kc_jwks_endpoint = f'http://{kc_hostname}:{kc_hostport}/realms/{tenant}/protocol/openid-connect/certs'
     kc_issuer = f'https://{endpoint}/auth/realms/{tenant}'
@@ -60,7 +60,7 @@ def parameters(module, path, config):
     ]
 
     ports = {
-        f'{port}/tcp': (host, port)
+        f'{hostport}/tcp': (hostaddr, hostport)
     } if export else {}
 
     volumes = [

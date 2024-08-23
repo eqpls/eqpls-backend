@@ -11,7 +11,7 @@ try: import LOG  # @UnresolvedImport
 except: pass
 
 from common import asleep, mergeArray, getNewsAndDelsArray, getSharesArray, runBackground, EpException
-from common import AuthDriverBase, AuthInfo, Org, Account, Policy, Group
+from common import AuthDriverBase, AuthInfo, Org, Account, Role, Group
 from driver.keyclock import KeyCloak
 from driver.redis import RedisAuthn
 
@@ -34,17 +34,23 @@ class AuthKeyCloakRedis(AuthDriverBase):
         self._authDefaultOrgDomain = config['default']['endpoint']
         self._authDefaultUsername = config['default']['admin_username']
 
-        self._authPolicyAttr = config['keycloak']['policy_attr']
-        self._authPolicyAdmin = config['keycloak']['policy_admin']
-        self._authPolicyUser = config['keycloak']['policy_user']
-        self._authPolicyRoot = config['keycloak']['policy_root']
+        self._authRoleRoot = config['keycloak']['role_root']
+        self._authRoleAttr = config['keycloak']['role_attr']
+        self._authRoleAdmin = config['keycloak']['role_admin']
+        self._authRoleUser = config['keycloak']['role_user']
 
-        self._authRefreshInfo = int(config['keycloak']['refresh_auth_info'])
-        self._authRefreshPolicy = int(config['keycloak']['refresh_policy'])
+        self._authGroupRoot = config['keycloak']['group_root']
+        self._authGroupAttr = config['keycloak']['group_attr']
+        self._authGroupAdmin = config['keycloak']['group_admin']
+        self._authGroupUser = config['keycloak']['group_user']
+
+        self._authRefreshAuth = int(config['keycloak']['refresh_auth'])
+        self._authRefreshRole = int(config['keycloak']['refresh_role'])
 
         self._authRefresh = True
-        self._authInfoMap = {}
-        self._authPolicyMap = {}
+        self._authAuthMap = {}
+        self._authRoleMap = {}
+        self._authAdminList = {}
 
     async def connect(self):
         await self._authKeyCloak.connect()
@@ -57,8 +63,8 @@ class AuthKeyCloakRedis(AuthDriverBase):
                 displayName=self._authDefaultOrgName
             ).createModel()
 
-        await runBackground(self.__refresh_info_map__())
-        await runBackground(self.__refresh_policy_map__())
+        await runBackground(self.__refresh_auth_map__())
+        await runBackground(self.__refresh_role_map__())
         return self
 
     async def disconnect(self):
@@ -66,53 +72,59 @@ class AuthKeyCloakRedis(AuthDriverBase):
         await self._authRedis.disconnect()
         await self._authKeyCloak.disconnect()
 
-    async def __refresh_info_map__(self):
+    async def __refresh_auth_map__(self):
         while self._authRefresh:
-            await asleep(self._authRefreshInfo)
-            self._authInfoMap = {}
+            await asleep(self._authRefreshAuth)
+            self._authAuthMap = {}
 
-    async def __refresh_policy_map__(self):
+    async def __refresh_role_map__(self):
         while self._authRefresh:
-            await asleep(self._authRefreshPolicy)
-            await self.refreshPolicyMap()
+            await asleep(self._authRefreshRole)
+            await self.refreshRoleMap()
 
-    async def refreshPolicyMap(self):
-        policyMap = {}
-        for policy in await Policy.searchModels(archive=True):
-            if policy.org not in policyMap: policyMap[policy.org] = {}
-            policyMap[policy.org][policy.name] = policy
-        self._authPolicyMap = policyMap
+    async def refreshRoleMap(self):
+        adminList = []
+        roleMap = {}
+        for role in await Role.searchModels(archive=True):
+            if role.org not in roleMap: roleMap[role.org] = {}
+            if role.admin: adminList.append(role.id)
+            roleMap[role.org][role.name] = role
+        self._authAdminList = adminList
+        self._authRoleMap = roleMap
 
     async def getAuthInfo(self, org:str, token:str):
-        if token in self._authInfoMap: return self._authInfoMap[token]
+        if token in self._authAuthMap: return self._authAuthMap[token]
         authInfo = await self._authRedis.read(token)
         if authInfo:
             authInfo = AuthInfo(**authInfo)
-            self._authInfoMap[token] = authInfo
+            self._authAuthMap[token] = authInfo
             return authInfo
         else:
-            policyMap = self._authPolicyMap
+            roleMap = self._authRoleMap
             if not org: org = self._authDefaultOrg
             userInfo = await self._authKeyCloak.getUserInfo(org, token)
-            policies = userInfo['policy'] if 'policy' in userInfo else []
-            admin = True if self._authPolicyAdmin in policies else False
+            roles = userInfo[self._authRoleAttr] if self._authRoleAttr in userInfo else []
+            admin = False
+            for role in self._authAdminList:
+                if role in roles: admin = True; break
             aclRead = []
             aclCreate = []
             aclUpdate = []
             aclDelete = []
-            for policy in policies:
-                if policy not in policyMap: continue
-                policy = policyMap[policy]
-                aclRead = mergeArray(aclRead, policy.aclRead)
-                aclCreate = mergeArray(aclCreate, policy.aclCreate)
-                aclUpdate = mergeArray(aclUpdate, policy.aclUpdate)
-                aclDelete = mergeArray(aclDelete, policy.aclDelete)
+            if not admin:
+                for role in roles:
+                    if role not in roleMap: continue
+                    role = roleMap[role]
+                    aclRead = mergeArray(aclRead, role.aclRead)
+                    aclCreate = mergeArray(aclCreate, role.aclCreate)
+                    aclUpdate = mergeArray(aclUpdate, role.aclUpdate)
+                    aclDelete = mergeArray(aclDelete, role.aclDelete)
 
             authInfoDict = {
                 'org': org,
                 'username': userInfo['preferred_username'],
                 'admin': admin,
-                'policy': policies,
+                'roles': roles,
                 'aclRead': aclRead,
                 'aclCreate': aclCreate,
                 'aclUpdate': aclUpdate,
@@ -121,7 +133,7 @@ class AuthKeyCloakRedis(AuthDriverBase):
 
             await runBackground(self._authRedis.write(token, authInfoDict))
             authInfo = AuthInfo(**authInfoDict)
-            self._authInfoMap[token] = authInfo
+            self._authAuthMap[token] = authInfo
             return authInfo
 
     async def createOrg(self, org:dict):
@@ -130,12 +142,19 @@ class AuthKeyCloakRedis(AuthDriverBase):
         orgName = org['name']
 
         org['externalId'] = (await self._authKeyCloak.createRealm(orgName, org['displayName']))['id']
-        await self._authKeyCloak.createGroup(orgName, self._authPolicyRoot)
+        await self._authKeyCloak.createGroup(orgName, self._authRoleRoot)
+        await self._authKeyCloak.createGroup(orgName, self._authGroupRoot)
 
-        await Policy(org=orgName, name=self._authPolicyAdmin).createModel()
-        await Policy(org=orgName, name=self._authPolicyUser).createModel()
+        role = await Role(org=orgName, name=self._authRoleAdmin, displayName=self._authRoleAdmin, admin=True).createModel()
+        roleAdminId = str(role.id)
+        role = await Role(org=orgName, name=self._authRoleUser, displayName=self._authRoleUser).createModel()
+        roleUserId = str(role.id)
+        group = await Group(org=orgName, name=self._authGroupAdmin, displayName=self._authGroupAdmin).createModel()
+        groupAdminId = str(group.id)
+        group = await Group(org=orgName, name=self._authGroupUser, displayName=self._authGroupUser).createModel()
+        groupUserId = str(group.id)
 
-        await self.refreshPolicyMap()
+        await self.refreshRoleMap()
 
         systemUser = await Account(
             org=orgName,
@@ -144,7 +163,8 @@ class AuthKeyCloakRedis(AuthDriverBase):
             givenName=self._authSystemUsername,
             familyName=self._authSystemUsername,
             email=f'{self._authSystemUsername}@{self._authDefaultOrgDomain}',
-            policy=[self._authPolicyAdmin]
+            roles=[roleAdminId],
+            groups=[groupAdminId]
         ).createModel()
         await self.updatePassword(systemUser.model_dump(), self._authSystemPassword)
 
@@ -155,7 +175,8 @@ class AuthKeyCloakRedis(AuthDriverBase):
             givenName=self._authDefaultUsername,
             familyName=self._authDefaultUsername,
             email=f'{self._authDefaultUsername}@{self._authDefaultOrgDomain}',
-            policy=[self._authPolicyAdmin, self._authPolicyUser]
+            roles=[roleAdminId, roleUserId],
+            groups=[groupAdminId, groupUserId]
         ).createModel()
 
         return org
@@ -175,39 +196,34 @@ class AuthKeyCloakRedis(AuthDriverBase):
             try: await group.deleteModel()
             except: pass
 
-        for policy in await Policy.searchModels(filter=f'org:{orgName}'):
-            try: await policy.deleteModel()
+        for role in await Role.searchModels(filter=f'org:{orgName}'):
+            try: await role.deleteModel()
             except: pass
 
         try: await self._authKeyCloak.deleteRealm(orgName)
         except: pass
 
-        await runBackground(self.refreshPolicyMap())
+        await runBackground(self.refreshRoleMap())
         return org
 
-    async def createPolicy(self, policy:dict):
-        orgName = policy['org']
+    async def createRole(self, role:dict):
+        orgName = role['org']
         if not orgName: raise EpException(400, 'Bad Request')
-        policyRootId = (await self._authKeyCloak.findGroup(orgName, self._authPolicyRoot))['id']
-        policy['externalId'] = (await self._authKeyCloak.createGroup(orgName, policy['name'], policyRootId, {self._authPolicyAttr: [policy['name']]}))['id']
-        return policy
+        roleName = role['id']
+        roleRootId = (await self._authKeyCloak.findGroup(orgName, self._authRoleRoot))['id']
+        role['externalId'] = (await self._authKeyCloak.createGroup(orgName, roleName, roleRootId, {self._authRoleAttr: [roleName]}))['id']
+        return role
 
-    async def deletePolicy(self, policy:dict):
-        await self._authKeyCloak.deleteGroup(policy['org'], policy['externalId'])
-        return policy
+    async def deleteRole(self, role:dict):
+        await self._authKeyCloak.deleteGroup(role['org'], role['externalId'])
+        return role
 
     async def createGroup(self, group:dict):
         orgName = group['org']
         if not orgName: raise EpException(400, 'Bad Request')
-        # for org in await Org.searchModels(filter=f'name:{orgName}', archive=True):
-        #     for option in org.option:
-        #         if option.key == 'groupRootId':
-        #             groupRootId = option.value
-        #             break
-        #     else: raise EpException(404, 'Not Found')
-        #     break
+        groupName = group['id']
         groupRootId = (await self._authKeyCloak.findGroup(orgName, self._authGroupRoot))['id']
-        group['externalId'] = (await self._authKeyCloak.createGroup(orgName, group['name'], groupRootId))['id']
+        group['externalId'] = (await self._authKeyCloak.createGroup(orgName, groupName, groupRootId, {self._authGroupAttr: [groupName]}))['id']
         return group
 
     async def updateGroup(self, group:dict):
@@ -231,37 +247,47 @@ class AuthKeyCloakRedis(AuthDriverBase):
         ))['id']
         account['externalId'] = userId
 
-        policyMap = self._authPolicyMap
-        if not account['policy']: account['policy'] = [self._authPolicyUser]
-        policies = []
-        for policy in account['policy']:
-            try: await self._authKeyCloak.registerUserToGroup(orgName, userId, policyMap[orgName][policy].externalId)
+        roleMap = self._authRoleMap
+        if not account['roles']: account['roles'] = [self._authRoleUser]
+        roles = []
+        for role in account['roles']:
+            try: await self._authKeyCloak.registerUserToGroup(orgName, userId, roleMap[orgName][role].externalId)
             except: pass
-            else: policies.append(policy)
-        account['policy'] = policies
+            else: roles.append(role)
+        account['roles'] = roles
+
+        if not account['groups']: account['groups'] = [self._authGroupUser]
+        groups = []
+        for groupId in account['groups']:
+            try:
+                group = await Group.readModelByID(groupId)
+                await self._authKeyCloak.registerUserToGroup(orgName, userId, group.externalId)
+            except: pass
+            else: groups.append(groupId)
+        account['groups'] = groups
 
         return account
 
     async def updateAccount(self, account:dict):
-        await self.refreshPolicyMap()
+        await self.refreshRoleMap()
 
         current = await Account.readModelByID(account['id'])
         orgName = account['org']
         userId = account['externalId']
-        accountRole = account['policy']
-        currentRole = current['policy']
+        accountRole = account['roles']
+        currentRole = current['roles']
 
-        policyMap = self._authPolicyMap
+        roleMap = self._authRoleMap
         news, dels = getNewsAndDelsArray(accountRole, currentRole)
-        policies = getSharesArray(accountRole, currentRole)
-        for policy in news:
-            try: await self._authKeyCloak.registerUserToGroup(orgName, userId, policyMap[orgName][policy].externalId)
+        roles = getSharesArray(accountRole, currentRole)
+        for role in news:
+            try: await self._authKeyCloak.registerUserToGroup(orgName, userId, roleMap[orgName][role].externalId)
             except: pass
-            else: policies.append(policy)
-        for policy in dels:
-            try: await self._authKeyCloak.unregisterUserFromGroup(orgName, userId, policyMap[orgName][policy].externalId)
+            else: roles.append(role)
+        for role in dels:
+            try: await self._authKeyCloak.unregisterUserFromGroup(orgName, userId, roleMap[orgName][role].externalId)
             except: pass
-        account['policy'] = policies
+        account['roles'] = roles
         await self._authKeyCloak.updateUserProperty(
             realm=orgName,
             userId=userId,

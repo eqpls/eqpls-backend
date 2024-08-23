@@ -7,8 +7,6 @@ Equal Plus
 #===============================================================================
 # Import
 #===============================================================================
-import os
-
 from fastapi import WebSocket
 
 from .controls import Control
@@ -16,7 +14,9 @@ from .controls import Control
 #===============================================================================
 # SingleTone
 #===============================================================================
-ctrl = Control(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+ctrl = Control(__file__)
 api = ctrl.api
 
 
@@ -24,9 +24,5 @@ api = ctrl.api
 # API Interfaces
 #===============================================================================
 @api.websocket(f'{ctrl.uri}/websocket')
-async def connect_websocket(
-    socket:WebSocket,
-    token: str,
-    org: str
-):
-    await ctrl.registerWSockConnection(socket, token, org)
+async def connect_websocket(socket:WebSocket):
+    await ctrl.registerWSockConnection(socket)

@@ -23,18 +23,18 @@ def parameters(module, path, config):
     health_check_retries = int(default['health_check_retries'])
 
     hostname = modconf['hostname']
-    host = modconf['host']
-    port = int(modconf['port'])
-    export = True if modconf['export'].lower() == 'true' else False
+    hostaddr = modconf['hostaddr']
+    hostport = int(modconf['hostport'])
+    export = int(modconf['export']) if modconf['export'] and modconf['export'].lower() != 'false' else None
     memory = modconf['memory']
 
     minio_browser_redirect_uri = f'https://{endpoint}/minio/ui/'
 
     kc_hostname = config['keycloak']['hostname']
-    kc_hostport = config['keycloak']['port']
+    kc_hostport = config['keycloak']['hostport']
     kc_openid_config_url = f'http://{kc_hostname}:{kc_hostport}/realms/{tenant}/.well-known/openid-configuration'
     kc_openid_client_id = 'minio'
-    # kc_openid_client_secret = 'AE9x8lEmWwuAy7g4jwLqCVxZXOKY6jvF'
+    kc_openid_claim_name = config['keycloak']['role_attr']
     kc_openid_display_name = title
     kc_openid_scopes = 'openid'
     kc_openid_redirect_uri = f'https://{endpoint}/minio/ui/oauth_callback'
@@ -46,7 +46,7 @@ def parameters(module, path, config):
         f'MINIO_BROWSER_REDIRECT_URL={minio_browser_redirect_uri}',
         f'MINIO_IDENTITY_OPENID_CONFIG_URL_PRIMARY_IAM={kc_openid_config_url}',
         f'MINIO_IDENTITY_OPENID_CLIENT_ID_PRIMARY_IAM={kc_openid_client_id}',
-        # f'MINIO_IDENTITY_OPENID_CLIENT_SECRET_PRIMARY_IAM={kc_openid_client_secret}',
+        f'MINIO_IDENTITY_OPENID_CLAIM_NAME={kc_openid_claim_name}',
         f'MINIO_IDENTITY_OPENID_DISPLAY_NAME_PRIMARY_IAM={kc_openid_display_name}',
         f'MINIO_IDENTITY_OPENID_SCOPES_PRIMARY_IAM={kc_openid_scopes}',
         f'MINIO_IDENTITY_OPENID_REDIRECT_URI_PRIMARY_IAM={kc_openid_redirect_uri}',
@@ -54,7 +54,7 @@ def parameters(module, path, config):
     ]
 
     ports = {
-        f'{port}/tcp': (host, port)
+        f'{hostport}/tcp': (hostaddr, hostport)
     } if export else {}
 
     volumes = [

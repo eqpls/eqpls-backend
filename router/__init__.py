@@ -17,10 +17,10 @@ import configparser
 #===============================================================================
 def run():
     modPath = os.path.dirname(os.path.abspath(__file__))
-    module = os.path.basename(modPath)
-    prjPath = os.path.abspath(f'{modPath}/..')
+    prjPath = os.path.dirname(modPath)
     iniPath = os.path.abspath(f'{prjPath}/project.ini')
     schPath = os.path.abspath(f'{prjPath}/schema')
+    module = os.path.basename(modPath)
 
     config = configparser.ConfigParser()
     config.read(iniPath, encoding='utf-8')
@@ -32,8 +32,8 @@ def run():
 
     uvicorn.run(
         'service.routes:api',
-        host=modConf['host'],
-        port=int(modConf['port']),
+        host=modConf['hostaddr'],
+        port=int(modConf['hostport']),
         loop='uvloop' if 'container' in modConf['runtime'] else 'auto',
         workers=int(modConf['workers']) if 'dev' not in stage else None,
         reload=True if 'dev' in stage else False,

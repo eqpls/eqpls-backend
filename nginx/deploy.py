@@ -26,9 +26,9 @@ def parameters(module, path, config):
     modules = [m.strip() for m in default['modules'].split(',')]
 
     hostname = modconf['hostname']
-    host = modconf['host']
-    port = int(modconf['port'])
-    export = True if modconf['export'].lower() == 'true' else False
+    hostaddr = modconf['hostaddr']
+    hostport = int(modconf['hostport'])
+    export = int(modconf['export']) if modconf['export'] and modconf['export'].lower() != 'false' else None
     memory = modconf['memory']
 
     publish = os.path.abspath(modconf['publish'])
@@ -99,7 +99,7 @@ def parameters(module, path, config):
 
         upstreams += '''
     upstream %s { server %s:%s; }
-''' % (prxname, prxname, prxconf['port'])
+''' % (prxname, prxname, prxconf['hostport'])
 
         locations += '''
         location /%s/ { proxy_pass http://%s/%s/; }
@@ -161,7 +161,7 @@ http {
     ]
 
     ports = {
-        f'{port}/tcp': (host, port)
+        f'{hostport}/tcp': (hostaddr, hostport)
     } if export else {}
 
     volumes = [
