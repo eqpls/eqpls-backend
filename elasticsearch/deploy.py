@@ -38,7 +38,7 @@ def parameters(module, path, config):
 
     volumes = [
         f'{path}/{module}/conf.d:/conf.d',
-        f'{path}/{module}/data.d:/usr/share/elasticsearch/data',
+        #f'{path}/{module}/data.d:/usr/share/elasticsearch/data',
         f'{path}/{module}/back.d:/back.d'
     ]
 

@@ -10,7 +10,7 @@ Equal Plus
 from pydantic import BaseModel
 
 from .constants import SECONDS, AAA
-from .models import Option, SchemaConfig, Key, EmptyReference, BaseSchema, ProfSchema, Reference
+from .models import Option, SchemaConfig, Key, BaseSchema, ProfSchema, Reference
 
 
 #===============================================================================
@@ -74,7 +74,7 @@ class Account(BaseModel, BaseSchema):
     email: str = ''
     roles: list[str] = []
     groups: list[str] = []
-    detail: Reference = EmptyReference
+    detail: Reference = {}
 
 
 @SchemaConfig(

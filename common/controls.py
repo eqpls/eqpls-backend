@@ -242,11 +242,11 @@ class UerpControl(BaseControl):
         self._uerpPathToSchemaMap[schemaInfo.path] = schema
 
         if AAA.checkAuthorization(schemaInfo.aaa):
-            if CRUD.checkRead(schemaInfo.crud):
+            if CRUD.checkRead(schemaInfo.rest):
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.__search_data_with_auth__, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.__count_data_with_auth__, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.__read_data_with_auth__, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
-            if CRUD.checkCreate(schemaInfo.crud):
+            if CRUD.checkCreate(schemaInfo.rest):
                 if AAA.checkGroup(schemaInfo.aaa):
                     self.__create_data_with_auth_by_group__.__annotations__['model'] = schema
                     self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.__create_data_with_auth_by_group__, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
@@ -255,7 +255,7 @@ class UerpControl(BaseControl):
                     self.__create_data_with_auth__.__annotations__['model'] = schema
                     self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.__create_data_with_auth__, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
                     self.__create_data_with_auth__.__annotations__['model'] = BaseModel
-            if CRUD.checkUpdate(schemaInfo.crud):
+            if CRUD.checkUpdate(schemaInfo.rest):
                 if AAA.checkGroup(schemaInfo.aaa):
                     self.__update_data_with_auth_by_group__.__annotations__['model'] = schema
                     self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.__update_data_with_auth_by_group__, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
@@ -264,25 +264,25 @@ class UerpControl(BaseControl):
                     self.__update_data_with_auth__.__annotations__['model'] = schema
                     self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.__update_data_with_auth__, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
                     self.__update_data_with_auth__.__annotations__['model'] = BaseModel
-            if CRUD.checkDelete(schemaInfo.crud):
+            if CRUD.checkDelete(schemaInfo.rest):
                 if AAA.checkGroup(schemaInfo.aaa):
                     self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.__delete_data_with_auth_by_group__, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
                 else:
                     self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.__delete_data_with_auth__, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
         else:
-            if CRUD.checkRead(schemaInfo.crud):
+            if CRUD.checkRead(schemaInfo.rest):
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.__search_data_with_free__, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.__count_data_with_free__, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.__read_data_with_free__, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
-            if CRUD.checkCreate(schemaInfo.crud):
+            if CRUD.checkCreate(schemaInfo.rest):
                 self.__create_data_with_free__.__annotations__['model'] = schema
                 self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.__create_data_with_free__, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
                 self.__create_data_with_free__.__annotations__['model'] = BaseModel
-            if CRUD.checkUpdate(schemaInfo.crud):
+            if CRUD.checkUpdate(schemaInfo.rest):
                 self.__update_data_with_free__.__annotations__['model'] = schema
                 self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.__update_data_with_free__, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
                 self.__update_data_with_free__.__annotations__['model'] = BaseModel
-            if CRUD.checkDelete(schemaInfo.crud):
+            if CRUD.checkDelete(schemaInfo.rest):
                 self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.__delete_data_with_free__, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
 
         return self
@@ -344,7 +344,7 @@ class UerpControl(BaseControl):
 
         if not authInfo.checkAdmin() and AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkReadACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
         model = await self.readModel(schema, id)
-        if not authInfo.checkOrg(model.org): raise EpException(404, 'Not Found')
+        if model.org and not authInfo.checkOrg(model.org): raise EpException(404, 'Not Found')
         if AAA.checkAccount(schemaInfo.aaa):
             if not authInfo.checkUsername(model.owner): raise EpException(403, 'Forbidden')
         elif AAA.checkGroup(schemaInfo.aaa):
@@ -363,7 +363,7 @@ class UerpControl(BaseControl):
         id
     ):
         schemaInfo = schema.getSchemaInfo()
-
+        
         if LAYER.checkCache(schemaInfo.layer):
             try:
                 model = await self._uerpCache.read(schema, id)
@@ -708,7 +708,7 @@ class UerpControl(BaseControl):
         origin = await self.readModel(schema, id)
         if not authInfo.checkAdmin():
             if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkUpdateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
+            if origin.org and not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
             if AAA.checkAccount(schemaInfo.aaa) and not authInfo.checkUsername(origin.owner): raise EpException(403, 'Forbidden')
 
         await self.updateModel(schema, model.setID(id).updateStatus(org=authInfo.org, owner=authInfo.username).model_dump())
@@ -730,7 +730,7 @@ class UerpControl(BaseControl):
         origin = await self.readModel(schema, id)
         if not authInfo.checkAdmin():
             if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkUpdateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
+            if origin.org and not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
             if not authInfo.checkGroup(origin.owner): raise EpException(403, 'Forbidden')
 
         await self.updateModel(schema, model.setID(id).updateStatus(org=authInfo.org, owner=origin.owner).model_dump())
@@ -795,7 +795,7 @@ class UerpControl(BaseControl):
         origin = await self.readModel(schema, id)
         if not authInfo.checkAdmin():
             if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkDeleteACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
+            if origin.org and not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
             if AAA.checkAccount(schemaInfo.aaa) and not authInfo.checkUsername(origin.owner): raise EpException(403, 'Forbidden')
 
         await self.deleteModel(schema, id, origin.setID(id).updateStatus(org=authInfo.org, owner=authInfo.username, deleted=True).model_dump(), force)
@@ -823,7 +823,7 @@ class UerpControl(BaseControl):
         origin = await self.readModel(schema, id)
         if not authInfo.checkAdmin():
             if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkDeleteACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
+            if origin.org and not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
             if not authInfo.checkGroup(origin.owner): raise EpException(403, 'Forbidden')
 
         await self.deleteModel(schema, id, origin.setID(id).updateStatus(org=authInfo.org, owner=origin.owner, deleted=True).model_dump(), force)

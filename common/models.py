@@ -74,12 +74,9 @@ class ServiceHealth(BaseModel):
 
 class Reference(BaseModel):
 
-    id:ID = ''
+    id:Key = ''
     sref:Key = ''
     uref:Key = ''
-
-    @classmethod
-    def createNoneReference(cls): return cls(id=_EMPTY_UUID, sref='', uref='')
 
     async def getModel(self, token=None, org=None):
         if not self.sref or not self.uref: raise EpException(400, 'Bad Request')
@@ -94,9 +91,6 @@ class Reference(BaseModel):
             if org: headers['Organization'] = org
             async with AsyncRest(schemaInfo.provider) as rest: return schema(**(await rest.get(self.uref, headers=headers)))
         else: raise EpException(405, 'Method Not Allowed')
-
-
-EmptyReference = Reference.createNoneReference()
 
 
 class ModelStatus(BaseModel):
@@ -131,9 +125,12 @@ class SchemaInfo(BaseModel):
     dref:str = ''
     path:str = ''
     tags:list[str] = []
+    
+    aaa:int = AAA.FREE
+    rest:int = CRUD.CRUD
     crud:int = CRUD.CRUD
     layer:int = LAYER.CSD
-    aaa:int = AAA.FREE
+    
     cache:Any | None = None
     search:Any | None = None
     database:Any | None = None

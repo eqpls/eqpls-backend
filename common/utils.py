@@ -8,9 +8,16 @@ Equal Plus
 # Import
 #===============================================================================
 import sys
+import random
+import string
 import logging
 import datetime
 import configparser
+
+#===============================================================================
+# Constnats
+#===============================================================================
+_LETTER_CANDIDATES = list(string.ascii_letters) + [str(i) for i in range(10)]
 
 
 #===============================================================================
@@ -58,6 +65,7 @@ class Logger:
 def mergeArray(arr1, arr2):
     return arr1 + list(set(arr2) - set(arr1))
 
+
 def getNewsAndDelsArray(new, old):
     news = []
     dels = []
@@ -66,8 +74,13 @@ def getNewsAndDelsArray(new, old):
         if item not in new: dels.append(item)
     return (news, dels)
 
+
 def getSharesArray(arr1, arr2):
     shares = []
     for item in arr1:
         if item in arr2: shares.append(item)
     return shares
+
+
+def getRandomString(length):
+    return random.choice(string.ascii_letters) + ''.join(random.choice(_LETTER_CANDIDATES) for _ in range(length - 1))
