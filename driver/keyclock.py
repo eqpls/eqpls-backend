@@ -85,9 +85,9 @@ class KeyCloak(DriverBase):
                 if e.status_code == 401: return await (await self.connect()).patch(url, payload)
                 else: raise e
 
-    async def delete(self, url):
+    async def delete(self, url, payload=None):
         async with AsyncRest(self._kcBaseUrl) as s:
-            try: return await s.delete(url, headers=self._kcHeaders)
+            try: return await s.delete(url, json=payload, headers=self._kcHeaders)
             except EpException as e:
                 if e.status_code == 401: return await (await self.connect()).delete(url)
                 else: raise e
@@ -279,10 +279,18 @@ class KeyCloak(DriverBase):
     async def readRole(self, realmId:str, roleId:str):
         return await self.get(f'/admin/realms/{realmId}/roles-by-id/{roleId}')
 
-    async def searchRoles(self, realmId:str, filter:str | None=None):
-        if filter: return await self.get(f'/admin/realms/{realmId}/roles?q=${filter}')
+    async def searchRoles(self, realmId:str, query:str | None=None):
+        if query: return await self.get(f'/admin/realms/{realmId}/roles?q=${query}')
         else: return await self.get(f'/admin/realms/{realmId}/roles')
-
+    
+    async def searchGroupsInRole(self, realmId:str, roleId:str):
+        roleName = (await self.readRole(realmId, roleId))['name']
+        return await self.get(f'/admin/realms/{realmId}/roles/{roleName}/groups')
+    
+    async def searchUsersInRole(self, realmId:str, roleId:str):
+        roleName = (await self.readRole(realmId, roleId))['name']
+        return await self.get(f'/admin/realms/{realmId}/roles/{roleName}/users')
+    
     async def createRole(self, realmId:str, name:str, description:str='', attributes:dict | None=None):
         await self.post(f'/admin/realms/{realmId}/roles', {
             'name': name,
@@ -294,104 +302,112 @@ class KeyCloak(DriverBase):
     async def updateRole(self, realmId:str, role:dict):
         roleId = role['id']
         await self.put(f'/admin/realms/{realmId}/roles-by-id/{roleId}', role)
-        return await self.get(f'/admin/realms/{realmId}/roles-by-id/{roleId}')
-
+        return await self.readRole(realmId, roleId)
+    
     async def deleteRole(self, realmId:str, roleId:str):
         await self.delete(f'/admin/realms/{realmId}/roles-by-id/{roleId}')
         return True
-
+    
     # Group ####################################################################
     async def readGroup(self, realmId:str, groupId:str):
         return await self.get(f'/admin/realms/{realmId}/groups/{groupId}')
 
-    async def searchGroups(self, realmId:str, filter:str | None=None):
-        if filter: return await self.get(f'/admin/realms/{realmId}/groups?q=${filter}')
+    async def searchGroups(self, realmId:str, query:str | None=None):
+        if query: return await self.get(f'/admin/realms/{realmId}/groups?q=${query}')
         else: return await self.get(f'/admin/realms/{realmId}/groups')
+        
+    async def searchUsersInGroup(self, realmId:str, groupId:str):
+        return await self.get(f'/admin/realms/{realmId}/groups/{groupId}/members')
 
     async def createGroup(self, realmId:str, name:str, attributes:dict | None=None):
-        await self.post(f'/admin/realms/{realm}/groups/{parentId}/children', {
+        await self.post(f'/admin/realms/{realmId}/groups', {
             'name': name,
             'attributes': attributes if attributes else {}
         })
-        groups = await self.searchGroups(realmId, filter=f'name:{name}')
+        groups = await self.searchGroups(realmId, query=f'name:{name}')
         for group in groups:
             if name == group['name']: return group
         raise EpException(500, 'Could not delete realm with predefined name')
 
-        # Edit Here
-        payload = {'name': name}
-        if attributes: payload['attributes'] = attributes
-        if parentId: await self.post(f'/admin/realms/{realm}/groups/{parentId}/children', payload)
-        else: await self.post(f'/admin/realms/{realm}/groups', payload)
-        return await self.findGroup(realm, groupName, parentId)
-
-    async def updateGroupName(self, realm:str, groupId:str, groupName:str):
-        await self.put(f'/admin/realms/{realm}/groups/{groupId}', {'name': groupName})
-        return True
-
-    async def updateGroupAttributes(self, realm:str, groupId:str, attributes:dict):
-        await self.put(f'/admin/realms/{realm}/groups/{groupId}', {'attributes': attributes})
-        return True
-
-    async def deleteGroup(self, realm:str, groupId:str):
-        await self.delete(f'/admin/realms/{realm}/groups/{groupId}')
+    async def updateGroup(self, realmId:str, group:dict):
+        groupId = group['id']
+        await self.put(f'/admin/realms/{realmId}/groups/{groupId}', group)
+        return await self.readGroup(realmId, groupId)
+    
+    async def insertGroupRole(self, realmId:str, groupId:str, roleIds:list[str]):
+        roles = []
+        for role in await self.searchRoles(realmId):
+            if role['id'] in roleIds: roles.append(role)
+        await self.post(f'/admin/realms/{realmId}/groups/{groupId}/role-mappings/realm', roles)
+        return await self.readGroup(realmId, groupId)
+    
+    async def deleteGroupRole(self, realmId:str, groupId:str, roleIds:list[str]):
+        roles = []
+        for role in await self.searchRoles(realmId):
+            if role['id'] in roleIds: roles.append(role)
+        await self.delete(f'/admin/realms/{realmId}/groups/{groupId}/role-mappings/realm', roles)
+        return await self.readGroup(realmId, groupId)
+    
+    async def deleteGroup(self, realmId:str, groupId:str):
+        await self.delete(f'/admin/realms/{realmId}/groups/{groupId}')
         return True
 
     # User #####################################################################
-    async def readUser(self, realm:str, userId:str):
-        return await self.get(f'/admin/realms/{realm}/users/{userId}')
+    async def readUser(self, realmId:str, userId:str):
+        return await self.get(f'/admin/realms/{realmId}/users/{userId}')
+    
+    async def searchUsers(self, realmId:str, query:str | None=None):
+        if query: return await self.get(f'/admin/realms/{realmId}/users?q={query}')
+        else: return await self.get(f'/admin/realms/{realmId}/users')
 
-    async def readUsersInGroup(self, realm:str, groupId:str):
-        return await self.get(f'/admin/realms/{realm}/groups/{groupId}/members')
-
-    async def searchUser(self, realm:str, filter:str | None=None):
-        if filter: return await self.get(f'/admin/realms/{realm}/users?username={filter}')
-        else: return await self.get(f'/admin/realms/{realm}/users')
-
-    async def findUser(self, realm:str, username:str):
-        for result in await self.searchUser(realm, username):
-            if result['username'] == username: return result
-        return None
-
-    async def createUser(self, realm:str, username:str, email:str, firstName:str, lastName:str, password:str | None=None, enabled:bool=True):
-        await self.post(f'/admin/realms/{realm}/users', {
+    async def createUser(self, realmId:str, username:str, email:str, firstName:str, lastName:str, enabled:bool=True):
+        await self.post(f'/admin/realms/{realmId}/users', {
             'username': username,
             'email': email,
             'firstName': firstName,
             'lastName': lastName
         })
-        user = await self.findUser(realm, username)
-        userId = user['id']
-        await self.updateUserPassword(realm, userId, password if password else username, False if password else True)
-        if enabled: await self.put(f'/admin/realms/{realm}/users/{userId}', {'enabled': True})
-        return user
+        for user in await self.searchUsers(realmId, query=f'username:{username}'):
+            if username == user['username']: return user
+        raise EpException(500, 'Could not find user created')
 
-    async def updateUserPassword(self, realm:str, userId:str, password:str, temporary=True):
-        await self.put(f'/admin/realms/{realm}/users/{userId}/reset-password', {
+    async def updateUser(self, realmId:str, user:dict):
+        userId = user['id']
+        await self.put(f'/admin/realms/{realmId}/users/{userId}', user)
+        return await self.readUser(realmId, userId)
+    
+    async def updateUserPassword(self, realmId:str, userId:str, password:str, temporary=True):
+        await self.put(f'/admin/realms/{realmId}/users/{userId}/reset-password', {
             'temporary': temporary,
             'type': 'password',
             'value': password
         })
         return True
+    
+    async def insertUserRole(self, realmId:str, userId:str, roleIds:list[str]):
+        roles = []
+        for role in await self.searchRoles(realmId):
+            if role['id'] in roleIds: roles.append(role)
+        await self.post(f'/admin/realms/{realmId}/users/{userId}/role-mappings/realm', roles)
+        return await self.readUser(realmId, userId)
+    
+    async def deleteUserRole(self, realmId:str, userId:str, roleIds:list[str]):
+        roles = []
+        for role in await self.searchRoles(realmId):
+            if role['id'] in roleIds: roles.append(role)
+        await self.delete(f'/admin/realms/{realmId}/users/{userId}/role-mappings/realm', roles)
+        return await self.readUser(realmId, userId)
 
-    async def updateUserProperty(self, realm:str, userId:str, email:str | None=None, firstName:str | None=None, lastName:str | None=None):
-        payload = {}
-        if email: payload['email'] = email
-        if firstName: payload['firstName'] = firstName
-        if lastName: payload['lastName'] = lastName
-        if payload: await self.put(f'/admin/realms/{realm}/users/{userId}', payload)
-        return True
+    async def registerUserToGroup(self, realmId:str, userId:str, groupId:str):
+        await self.put(f'/admin/realms/{realmId}/users/{userId}/groups/{groupId}', {})
+        return await self.readUser(realmId, userId)
 
-    async def registerUserToGroup(self, realm:str, userId:str, groupId:str):
-        await self.put(f'/admin/realms/{realm}/users/{userId}/groups/{groupId}', {})
-        return True
+    async def unregisterUserFromGroup(self, realmId:str, userId:str, groupId:str):
+        await self.delete(f'/admin/realms/{realmId}/users/{userId}/groups/{groupId}')
+        return await self.readUser(realmId, userId)
 
-    async def unregisterUserFromGroup(self, realm:str, userId:str, groupId:str):
-        await self.delete(f'/admin/realms/{realm}/users/{userId}/groups/{groupId}')
-        return True
-
-    async def deleteUser(self, realm:str, userId:str):
-        await self.delete(f'/admin/realms/{realm}/users/{userId}')
+    async def deleteUser(self, realmId:str, userId:str):
+        await self.delete(f'/admin/realms/{realmId}/users/{userId}')
         return True
 
     #===========================================================================

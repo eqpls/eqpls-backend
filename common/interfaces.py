@@ -62,8 +62,8 @@ class SyncRest:
         try: return res.json()
         except: res.text
 
-    def delete(self, url, headers=None):
-        res = self.session.delete(f'{self.baseUrl}{url}', headers=headers, verify=False)
+    def delete(self, url, data=None, json=None, headers=None):
+        res = self.session.delete(f'{self.baseUrl}{url}', data=data, json=json, headers=headers, verify=False)
         res.raise_for_status()
         try: return res.json()
         except: res.text
@@ -128,9 +128,9 @@ class AsyncRest:
         except ClientResponseError as e:
             raise EpException(e.status, e.message)
 
-    async def delete(self, url, headers=None):
+    async def delete(self, url, data=None, json=None, headers=None):
         try:
-            async with self.session.delete(f'{self.baseUrl}{url}', headers=headers) as res:
+            async with self.session.delete(f'{self.baseUrl}{url}', data=data, json=json, headers=headers) as res:
                 data = await res.text()
                 try: return loads(data)
                 except: return data
