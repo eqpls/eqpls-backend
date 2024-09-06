@@ -73,9 +73,10 @@ class BaseControl:
         self.api.router.add_event_handler('shutdown', self.__shutdown__)
 
     async def __startup__(self):
-        LOG.INFO(f'{self.module} prepare controller')
         await self.startup()
+        LOG.INFO('startup finished')
         if self.background: await runBackground(self.__background__())
+        LOG.INFO('start background')
         self.api.add_api_route(
             tags=['Internal Only'],
             name='Health',
@@ -84,7 +85,7 @@ class BaseControl:
             endpoint=self.__health__,
             response_model=ServiceHealth
         )
-        LOG.INFO(f'{self.module} controller is ready')
+        LOG.INFO('register health interface')
 
     async def __shutdown__(self):
         LOG.INFO(f'{self.module} stop controller')
@@ -180,35 +181,42 @@ class UerpControl(BaseControl):
         await BaseControl.__startup__(self)
 
         self.api.add_api_route(methods=['GET'], path=f'{self.uri}/v{self.version}/schema', endpoint=self.__describe_schema__, response_model=dict, tags=['Schema'], name='Get Schema Map')
+        LOG.INFO('register schema interface')
 
-        await self.registerModel(
-            schema=Org,
-            createHandler=self._uerpAuth.createOrg,
-            updateHandler=self._uerpAuth.updateOrg,
-            deleteHandler=self._uerpAuth.deleteOrg
-        )
-        await self.registerModel(
-            schema=Role,
-            createHandler=self._uerpAuth.createRole,
-            updateHandler=self._uerpAuth.updateRole,
-            deleteHandler=self._uerpAuth.deleteRole
-        )
-        await self.registerModel(
-            schema=Group,
-            createHandler=self._uerpAuth.createGroup,
-            updateHandler=self._uerpAuth.updateGroup,
-            deleteHandler=self._uerpAuth.deleteGroup
-        )
         await self.registerModel(
             schema=Account,
             createHandler=self._uerpAuth.createAccount,
             updateHandler=self._uerpAuth.updateAccount,
             deleteHandler=self._uerpAuth.deleteAccount
         )
+        LOG.INFO('register account interface')
+        await self.registerModel(
+            schema=Role,
+            createHandler=self._uerpAuth.createRole,
+            updateHandler=self._uerpAuth.updateRole,
+            deleteHandler=self._uerpAuth.deleteRole
+        )
+        LOG.INFO('register role interface')
+        await self.registerModel(
+            schema=Group,
+            createHandler=self._uerpAuth.createGroup,
+            updateHandler=self._uerpAuth.updateGroup,
+            deleteHandler=self._uerpAuth.deleteGroup
+        )
+        LOG.INFO('register group interface')
+        await self.registerModel(
+            schema=Org,
+            createHandler=self._uerpAuth.createOrg,
+            updateHandler=self._uerpAuth.updateOrg,
+            deleteHandler=self._uerpAuth.deleteOrg
+        )
+        LOG.INFO('register org interface')
         await self._uerpAuth.connect()
-
+        LOG.INFO('connect auth driver')
         self.api.add_api_route(methods=['GET'], path='/internal/authinfo', endpoint=self.__confirm_auth_info__, response_model=AuthInfo, tags=['Internal Only'], name='Check Auth Info')
+        LOG.INFO('register authinfo interface')
         self.api.add_api_route(methods=['GET'], path='/internal/client/secret', endpoint=self.__get_client_secret__, response_model=str, tags=['Internal Only'], name='Get Client Secret')
+        LOG.INFO('register client secret interface')
 
     async def __shutdown__(self):
         await BaseControl.__shutdown__(self)
@@ -327,7 +335,7 @@ class UerpControl(BaseControl):
         org:str,
         client:str
     ) -> str:
-        return await self._uerpAuth._authKeyCloak.getClientSecret(realm=org, clientId=client)
+        return await self._uerpAuth._authKeyCloak.getClientSecret(realmId=org, clientId=client)
 
     async def __read_data_with_auth__(
         self,
@@ -363,7 +371,7 @@ class UerpControl(BaseControl):
         id
     ):
         schemaInfo = schema.getSchemaInfo()
-        
+
         if LAYER.checkCache(schemaInfo.layer):
             try:
                 model = await self._uerpCache.read(schema, id)
@@ -635,8 +643,7 @@ class UerpControl(BaseControl):
         schemaInfo = schema.getSchemaInfo()
 
         if not authInfo.checkAdmin() and AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkCreateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-        await self.createModel(schema, model.setID().updateStatus(org=authInfo.org, owner=authInfo.username).model_dump())
-        return model
+        return await self.createModel(schema, model.setID().updateStatus(org=authInfo.org, owner=authInfo.username).model_dump())
 
     async def __create_data_with_auth_by_group__(
         self,
@@ -654,15 +661,13 @@ class UerpControl(BaseControl):
         if not authInfo.checkAdmin():
             if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkCreateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
             if not authInfo.checkGroup(groupId): raise EpException(403, 'Forbidden')
-        await self.createModel(schema, model.setID().updateStatus(org=authInfo.org, owner=groupId).model_dump())
-        return model
+        return await self.createModel(schema, model.setID().updateStatus(org=authInfo.org, owner=groupId).model_dump())
 
     async def __create_data_with_free__(
         self,
         model:BaseModel
     ):
-        await self.createModel(model.__class__, model.setID().updateStatus().model_dump())
-        return model
+        return await self.createModel(model.__class__, model.setID().updateStatus().model_dump())
 
     async def createModel(
         self,
@@ -679,6 +684,7 @@ class UerpControl(BaseControl):
                 if result:
                     if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.create(schema, data))
                     if LAYER.checkSearch(schemaInfo.layer): await runBackground(self._uerpSearch.create(schema, data))
+                    return data
                 else: raise EpException(409, 'Conflict')
         elif LAYER.checkSearch(schemaInfo.layer):
             try: await self._uerpSearch.create(schema, data)
@@ -686,10 +692,12 @@ class UerpControl(BaseControl):
             except Exception as e: LOG.ERROR(e); traceback.print_exc(); raise EpException(503, 'Service Unavailable')
             else:
                 if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.create(schema, data))
+                return data
         elif LAYER.checkCache(schemaInfo.layer):
             try: await self._uerpCache.create(schema, data)
             except LookupError as e: LOG.ERROR(e); traceback.print_exc(); raise EpException(400, 'Bad Request')
             except Exception as e: LOG.ERROR(e); traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            else: return data
         else: raise EpException(501, 'Not Implemented')
 
     async def __update_data_with_auth__(
@@ -710,9 +718,7 @@ class UerpControl(BaseControl):
             if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkUpdateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
             if origin.org and not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
             if AAA.checkAccount(schemaInfo.aaa) and not authInfo.checkUsername(origin.owner): raise EpException(403, 'Forbidden')
-
-        await self.updateModel(schema, model.setID(id).updateStatus(org=authInfo.org, owner=authInfo.username).model_dump())
-        return model
+        return await self.updateModel(schema, model.setID(id).updateStatus(org=authInfo.org, owner=authInfo.username).model_dump())
 
     async def __update_data_with_auth_by_group__(
         self,
@@ -732,9 +738,7 @@ class UerpControl(BaseControl):
             if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkUpdateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
             if origin.org and not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
             if not authInfo.checkGroup(origin.owner): raise EpException(403, 'Forbidden')
-
-        await self.updateModel(schema, model.setID(id).updateStatus(org=authInfo.org, owner=origin.owner).model_dump())
-        return model
+        return await self.updateModel(schema, model.setID(id).updateStatus(org=authInfo.org, owner=origin.owner).model_dump())
 
     async def __update_data_with_free__(
         self,
@@ -742,8 +746,7 @@ class UerpControl(BaseControl):
         model:BaseModel
     ):
         schema = model.__class__
-        await self.updateModel(schema, model.setID(str(id)).updateStatus().model_dump())
-        return model
+        return await self.updateModel(schema, model.setID(str(id)).updateStatus().model_dump())
 
     async def updateModel(
         self,
@@ -760,6 +763,7 @@ class UerpControl(BaseControl):
                 if result:
                     if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.update(schema, data))
                     if LAYER.checkSearch(schemaInfo.layer): await runBackground(self._uerpSearch.update(schema, data))
+                    return data
                 else: raise EpException(409, 'Conflict')
         elif LAYER.checkSearch(schemaInfo.layer):
             try: await self._uerpSearch.update(schema, data)
@@ -767,10 +771,12 @@ class UerpControl(BaseControl):
             except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
             else:
                 if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.update(schema, data))
+                return data
         elif LAYER.checkCache(schemaInfo.layer):
             try: await self._uerpCache.update(schema, data)
             except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
             except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            else: return data
         else: raise EpException(501, 'Not Implemented')
 
     async def __delete_data_with_auth__(

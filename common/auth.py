@@ -67,11 +67,12 @@ search=Option(expire=SECONDS.DAY))
 class Account(BaseModel, BaseSchema):
 
     externalId: Key = ''
-    username: str = ''
+    username: Key = ''
     displayName: str = ''
     givenName: str = ''
     familyName: str = ''
     email: str = ''
+    enabled: bool = False
     roles: list[str] = []
     groups: list[str] = []
     detail: Reference = {}
@@ -84,8 +85,8 @@ cache=Option(expire=SECONDS.HOUR),
 search=Option(expire=SECONDS.DAY))
 class Role(BaseModel, ProfSchema, BaseSchema):
 
-    admin:bool = False
     externalId:Key = ''
+    admin:bool = False
     aclRead: list[str] = []
     aclCreate: list[str] = []
     aclUpdate: list[str] = []
@@ -100,4 +101,3 @@ search=Option(expire=SECONDS.DAY))
 class Group(BaseModel, ProfSchema, BaseSchema):
 
     externalId: Key = ''
-    parentId: Key = ''

@@ -25,12 +25,16 @@ class KeyCloak(DriverBase):
         self._kcHostname = config['keycloak']['hostname']
         self._kcHostport = int(config['keycloak']['hostport'])
 
+        self._kcRoleAttr = config['keycloak']['role_attr']
+        self._kcGroupAttr = config['keycloak']['group_attr']
+
         self._kcFrontend = f'https://{self._kcEndpoint}'
         self._kcBaseUrl = f'http://{self._kcHostname}:{self._kcHostport}'
 
         self._kcAccessToken = None
         self._kcRefreshToken = None
         self._kcHeaders = None
+
 
     async def connect(self, *args, **kargs):
         async with AsyncRest(self._kcBaseUrl) as rest:
@@ -129,15 +133,14 @@ class KeyCloak(DriverBase):
             if scope['name'] == 'openid-client-scope': scopeId = scope['id']; break
         else: raise EpException(404, 'Could not find client scope')
         await self.post(f'/admin/realms/{realmId}/client-scopes/{scopeId}/protocol-mappers/models', {
-            'name': 'roles',
+            'name': self._kcRoleAttr,
             'protocol': 'openid-connect',
-            'protocolMapper': 'oidc-usermodel-attribute-mapper',
+            'protocolMapper': 'oidc-usermodel-realm-role-mapper',
             'config': {
-                'claim.name': 'roles',
-                'user.attribute': 'roles',
+                'claim.name': self._kcRoleAttr,
+                'usermodel.realmRoleMapping.rolePrefix': '',
                 'jsonType.label': 'String',
                 'multivalued': True,
-                'aggregate.attrs': True,
                 'id.token.claim': True,
                 'access.token.claim': True,
                 'lightweight.claim': False,
@@ -146,12 +149,12 @@ class KeyCloak(DriverBase):
             }
         })
         await self.post(f'/admin/realms/{realmId}/client-scopes/{scopeId}/protocol-mappers/models', {
-            'name': 'groups',
+            'name': self._kcGroupAttr,
             'protocol': 'openid-connect',
             'protocolMapper': 'oidc-usermodel-attribute-mapper',
             'config': {
-                'claim.name': 'groups',
-                'user.attribute': 'groups',
+                'claim.name': self._kcGroupAttr,
+                'user.attribute': self._kcGroupAttr,
                 'jsonType.label': 'String',
                 'multivalued': True,
                 'aggregate.attrs': True,
@@ -279,18 +282,18 @@ class KeyCloak(DriverBase):
     async def readRole(self, realmId:str, roleId:str):
         return await self.get(f'/admin/realms/{realmId}/roles-by-id/{roleId}')
 
-    async def searchRoles(self, realmId:str, query:str | None=None):
-        if query: return await self.get(f'/admin/realms/{realmId}/roles?q=${query}')
+    async def searchRoles(self, realmId:str, search:str | None=None):
+        if search: return await self.get(f'/admin/realms/{realmId}/roles?search={search}')
         else: return await self.get(f'/admin/realms/{realmId}/roles')
-    
+
     async def searchGroupsInRole(self, realmId:str, roleId:str):
         roleName = (await self.readRole(realmId, roleId))['name']
         return await self.get(f'/admin/realms/{realmId}/roles/{roleName}/groups')
-    
+
     async def searchUsersInRole(self, realmId:str, roleId:str):
         roleName = (await self.readRole(realmId, roleId))['name']
         return await self.get(f'/admin/realms/{realmId}/roles/{roleName}/users')
-    
+
     async def createRole(self, realmId:str, name:str, description:str='', attributes:dict | None=None):
         await self.post(f'/admin/realms/{realmId}/roles', {
             'name': name,
@@ -303,19 +306,19 @@ class KeyCloak(DriverBase):
         roleId = role['id']
         await self.put(f'/admin/realms/{realmId}/roles-by-id/{roleId}', role)
         return await self.readRole(realmId, roleId)
-    
+
     async def deleteRole(self, realmId:str, roleId:str):
         await self.delete(f'/admin/realms/{realmId}/roles-by-id/{roleId}')
         return True
-    
+
     # Group ####################################################################
     async def readGroup(self, realmId:str, groupId:str):
         return await self.get(f'/admin/realms/{realmId}/groups/{groupId}')
 
-    async def searchGroups(self, realmId:str, query:str | None=None):
-        if query: return await self.get(f'/admin/realms/{realmId}/groups?q=${query}')
+    async def searchGroups(self, realmId:str, search:str | None=None):
+        if search: return await self.get(f'/admin/realms/{realmId}/groups?search={search}')
         else: return await self.get(f'/admin/realms/{realmId}/groups')
-        
+
     async def searchUsersInGroup(self, realmId:str, groupId:str):
         return await self.get(f'/admin/realms/{realmId}/groups/{groupId}/members')
 
@@ -324,30 +327,30 @@ class KeyCloak(DriverBase):
             'name': name,
             'attributes': attributes if attributes else {}
         })
-        groups = await self.searchGroups(realmId, query=f'name:{name}')
+        groups = await self.searchGroups(realmId, search=name)
         for group in groups:
             if name == group['name']: return group
-        raise EpException(500, 'Could not delete realm with predefined name')
+        raise EpException(500, 'Could not find group created')
 
     async def updateGroup(self, realmId:str, group:dict):
         groupId = group['id']
         await self.put(f'/admin/realms/{realmId}/groups/{groupId}', group)
         return await self.readGroup(realmId, groupId)
-    
+
     async def insertGroupRole(self, realmId:str, groupId:str, roleIds:list[str]):
         roles = []
         for role in await self.searchRoles(realmId):
             if role['id'] in roleIds: roles.append(role)
         await self.post(f'/admin/realms/{realmId}/groups/{groupId}/role-mappings/realm', roles)
         return await self.readGroup(realmId, groupId)
-    
+
     async def deleteGroupRole(self, realmId:str, groupId:str, roleIds:list[str]):
         roles = []
         for role in await self.searchRoles(realmId):
             if role['id'] in roleIds: roles.append(role)
         await self.delete(f'/admin/realms/{realmId}/groups/{groupId}/role-mappings/realm', roles)
         return await self.readGroup(realmId, groupId)
-    
+
     async def deleteGroup(self, realmId:str, groupId:str):
         await self.delete(f'/admin/realms/{realmId}/groups/{groupId}')
         return True
@@ -355,43 +358,51 @@ class KeyCloak(DriverBase):
     # User #####################################################################
     async def readUser(self, realmId:str, userId:str):
         return await self.get(f'/admin/realms/{realmId}/users/{userId}')
-    
-    async def searchUsers(self, realmId:str, query:str | None=None):
-        if query: return await self.get(f'/admin/realms/{realmId}/users?q={query}')
+
+    async def searchUsers(self, realmId:str, search:str | None=None):
+        if search: return await self.get(f'/admin/realms/{realmId}/users?search={search}')
         else: return await self.get(f'/admin/realms/{realmId}/users')
 
-    async def createUser(self, realmId:str, username:str, email:str, firstName:str, lastName:str, enabled:bool=True):
+    async def createUser(self, realmId:str, username:str, email:str, firstName:str, lastName:str):
         await self.post(f'/admin/realms/{realmId}/users', {
             'username': username,
             'email': email,
             'firstName': firstName,
             'lastName': lastName
         })
-        for user in await self.searchUsers(realmId, query=f'username:{username}'):
-            if username == user['username']: return user
+        for user in await self.searchUsers(realmId, search=username):
+            if username == user['username']:
+                userId = user['id']
+                roles = await self.get(f'/admin/realms/{realmId}/users/{userId}/role-mappings/realm')
+                await self.delete(f'/admin/realms/{realmId}/users/{userId}/role-mappings/realm', roles)
+                return user
         raise EpException(500, 'Could not find user created')
 
     async def updateUser(self, realmId:str, user:dict):
         userId = user['id']
         await self.put(f'/admin/realms/{realmId}/users/{userId}', user)
         return await self.readUser(realmId, userId)
-    
-    async def updateUserPassword(self, realmId:str, userId:str, password:str, temporary=True):
+
+    async def updateUserEnabled(self, realmId:str, userId:str, enabled:bool):
+        await self.put(f'/admin/realms/{realmId}/users/{userId}', {'enabled': enabled})
+        return True
+
+    async def updateUserPassword(self, realmId:str, userId:str, password:str, temporary:bool=True):
         await self.put(f'/admin/realms/{realmId}/users/{userId}/reset-password', {
             'temporary': temporary,
             'type': 'password',
             'value': password
         })
         return True
-    
-    async def insertUserRole(self, realmId:str, userId:str, roleIds:list[str]):
+
+    async def insertUserRoles(self, realmId:str, userId:str, roleIds:list[str]):
         roles = []
         for role in await self.searchRoles(realmId):
             if role['id'] in roleIds: roles.append(role)
         await self.post(f'/admin/realms/{realmId}/users/{userId}/role-mappings/realm', roles)
         return await self.readUser(realmId, userId)
-    
-    async def deleteUserRole(self, realmId:str, userId:str, roleIds:list[str]):
+
+    async def deleteUserRoles(self, realmId:str, userId:str, roleIds:list[str]):
         roles = []
         for role in await self.searchRoles(realmId):
             if role['id'] in roleIds: roles.append(role)
