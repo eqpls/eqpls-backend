@@ -12,7 +12,7 @@ from .constants import SECONDS, CRUD, LAYER, AAA, ORG_HEADER, AUTH_HEADER
 from .exceptions import EpException
 
 from .utils import setEnvironment, getConfig, Logger
-from .utils import mergeArray, getNewsAndDelsArray, getSharesArray, getRandomString
+from .utils import mergeArray, getNewsAndDelsArray, getSharesArray, getRandomString, encodeBase64, decodeBase64
 
 from .schedules import asleep, runBackground, runSyncAsAsync, MultiTask
 

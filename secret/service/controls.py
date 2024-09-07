@@ -7,7 +7,7 @@ Equal Plus
 #===============================================================================
 # Import
 #===============================================================================
-from common import MeshControl
+from common import MeshControl, AsyncRest
 
 from schema.secret.certification import Authority, Server
 from schema.secret.access import OpenSsh

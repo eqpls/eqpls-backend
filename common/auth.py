@@ -86,6 +86,7 @@ search=Option(expire=SECONDS.INFINITY))
 class Role(BaseModel, ProfSchema, BaseSchema):
 
     externalId:Key = ''
+    type:Key = 'general'
     admin:bool = False
     aclRead: list[str] = []
     aclCreate: list[str] = []
@@ -101,3 +102,5 @@ search=Option(expire=SECONDS.INFINITY))
 class Group(BaseModel, ProfSchema, BaseSchema):
 
     externalId: Key = ''
+    type:Key = 'general'
+    objectPolicy: bool = True

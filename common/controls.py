@@ -25,6 +25,8 @@ from .interfaces import AsyncRest
 from .utils import getConfig, Logger
 from .models import Search, ID, BaseSchema, ServiceHealth, ModelStatus, ModelCount
 from .auth import AuthInfo, Org, Account, Role, Group
+from .data.user import Bucket as UserBucket
+from .data.group import Bucket as GroupBucket
 
 
 #===============================================================================
@@ -181,6 +183,20 @@ class UerpControl(BaseControl):
         await BaseControl.__startup__(self)
 
         await self.registerModel(
+            schema=UserBucket,
+            createHandler=self._uerpAuth.createBucket,
+            updateHandler=self._uerpAuth.updateBucket,
+            deleteHandler=self._uerpAuth.deleteBucket
+        )
+        LOG.INFO('register user bucket interface')
+        await self.registerModel(
+            schema=GroupBucket,
+            createHandler=self._uerpAuth.createBucket,
+            updateHandler=self._uerpAuth.updateBucket,
+            deleteHandler=self._uerpAuth.deleteBucket
+        )
+        LOG.INFO('register group bucket interface')
+        await self.registerModel(
             schema=Account,
             createHandler=self._uerpAuth.createAccount,
             updateHandler=self._uerpAuth.updateAccount,
@@ -232,8 +248,15 @@ class UerpControl(BaseControl):
 
         self.api.add_api_route(methods=['GET'], path='/internal/authinfo', endpoint=self.__confirm_auth_info__, response_model=AuthInfo, tags=['Supervisor Interface'], name='Check Auth Info')
         LOG.INFO('register supervisor authinfo interface')
+
         self.api.add_api_route(methods=['GET'], path='/internal/client/secret', endpoint=self.__get_client_secret__, response_model=str, tags=['Supervisor Interface'], name='Get Client Secret')
         LOG.INFO('register supervisor client secret interface')
+
+        self.api.add_api_route(methods=['GET'], path='/internal/default/user/role', endpoint=self.__get_default_user_role__, response_model=str, tags=['Supervisor Interface'], name='Get Default User Role')
+        LOG.INFO('register supervisor default user role interface')
+
+        self.api.add_api_route(methods=['GET'], path='/internal/default/user/group', endpoint=self.__get_default_user_group__, response_model=str, tags=['Supervisor Interface'], name='Get Default User Group')
+        LOG.INFO('register supervisor default user group interface')
 
     async def __shutdown__(self):
         await BaseControl.__shutdown__(self)
@@ -353,7 +376,19 @@ class UerpControl(BaseControl):
         org:str,
         client:str
     ) -> str:
-        return await self._uerpAuth._authKeyCloak.getClientSecret(realmId=org, clientId=client)
+        return await self._uerpAuth.getClientSecret(org, client)
+
+    async def __get_default_user_role__(
+        self,
+        org:str
+    ) -> str:
+        return await self._uerpAuth.getDefaultUserRole(org)
+
+    async def __get_default_user_group__(
+        self,
+        org:str
+    ) -> str:
+        return await self._uerpAuth.getDefaultUserGroup(org)
 
     async def __read_data_with_auth__(
         self,

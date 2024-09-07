@@ -9,7 +9,8 @@ Equal Plus
 #===============================================================================
 from common import UerpControl
 
-from driver.auth_kc_redis import AuthKeyCloakRedis
+# from driver.auth_kc_redis import AuthKeyCloakRedis
+from driver.krm import KeycloakRedisMinio
 from driver.redis import RedisModel
 from driver.elasticsearch import ElasticSearch
 from driver.postgresql import PostgreSql
@@ -27,7 +28,7 @@ class Control(UerpControl):
         UerpControl.__init__(
             self,
             path=path,
-            authDriver=AuthKeyCloakRedis,
+            authDriver=KeycloakRedisMinio,
             cacheDriver=RedisModel,
             searchDriver=ElasticSearch,
             databaseDriver=PostgreSql

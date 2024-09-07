@@ -7,7 +7,13 @@ ORGANIZATION="eqpls"
 echo -n "export MINIO_IDENTITY_OPENID_CLIENT_SECRET_PRIMARY_IAM=" > /client_secret
 curl -s "http://$UERP_ENDPOINT/internal/client/secret?org=$ORGANIZATION&client=minio" >> /client_secret
 . /client_secret
-echo "MINIO_IDENTITY_OPENID_CLIENT_SECRET=$MINIO_IDENTITY_OPENID_CLIENT_SECRET_PRIMARY_IAM"
+
+echo -n "export MINIO_DEFAULT_USER_GROUP_ID=" > /default_user_group
+curl -s "http://$UERP_ENDPOINT/internal/default/user/group?org=$ORGANIZATION" >> /default_user_group
+. /default_user_group
+
+echo "MINIO_IDENTITY_OPENID_CLIENT_SECRET_PRIMARY_IAM=$MINIO_IDENTITY_OPENID_CLIENT_SECRET_PRIMARY_IAM"
+echo "MINIO_DEFAULT_USER_GROUP_ID=$MINIO_DEFAULT_USER_GROUP_ID"
 ######################### eqpls #
 
 # If command starts with an option, prepend minio.

@@ -40,6 +40,7 @@ class AuthKeyCloakRedis(AuthDriverBase):
         self._authRefresh = True
         self._authAuthMap = {}
 
+        self._authAdminRole = {}
         self._authDefaultUserRole = {}
         self._authDefaultUserGroup = {}
 
@@ -124,7 +125,7 @@ class AuthKeyCloakRedis(AuthDriverBase):
         roleAdmin = await Role(org=realmId, name='admin', displayName='Admin', admin=True).createModel()
         roleAdminId = str(roleAdmin.id)
 
-        await Role(org=realmId, name=realmId, displayName='All Users').createModel()
+        await Role(org=realmId, name=realmId, displayName='User').createModel()
         await Group(org=realmId, name=realmId, displayName='All Users').createModel()
 
         systemUser = await Account(
@@ -207,7 +208,10 @@ class AuthKeyCloakRedis(AuthDriverBase):
         kcGroup = await self._authKeyCloak.createGroup(
             realmId=group['org'],
             name=groupId,
-            attributes={self._authAttrGroup: [groupId]}
+            attributes={
+                'policy': [groupId],
+                self._authAttrGroup: [groupId]
+            }
         )
         group['externalId'] = kcGroup['id']
         return group

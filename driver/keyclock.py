@@ -28,6 +28,10 @@ class KeyCloak(DriverBase):
         self._kcAttrRole = config['keycloak']['attr_role']
         self._kcAttrGroup = config['keycloak']['attr_group']
 
+        self._kcSsoSessionIdle = int(config['keycloak']['sso_session_idle'])
+        self._kcSsoSessionMax = int(config['keycloak']['sso_session_max'])
+        self._kcSsoTokenLife = int(config['keycloak']['sso_token_life'])
+
         self._kcFrontend = f'https://{self._kcEndpoint}'
         self._kcBaseUrl = f'http://{self._kcHostname}:{self._kcHostport}'
 
@@ -132,14 +136,15 @@ class KeyCloak(DriverBase):
             if scope['name'] == 'openid-client-scope': scopeId = scope['id']; break
         else: raise EpException(404, 'Could not find client scope')
         await self.post(f'/admin/realms/{realmId}/client-scopes/{scopeId}/protocol-mappers/models', {
-            'name': self._kcAttrRole,
+            'name': 'policy',
             'protocol': 'openid-connect',
-            'protocolMapper': 'oidc-usermodel-realm-role-mapper',
+            'protocolMapper': 'oidc-usermodel-attribute-mapper',
             'config': {
-                'claim.name': self._kcAttrRole,
-                'usermodel.realmRoleMapping.rolePrefix': '',
+                'claim.name': 'policy',
+                'user.attribute': 'policy',
                 'jsonType.label': 'String',
                 'multivalued': True,
+                'aggregate.attrs': True,
                 'id.token.claim': True,
                 'access.token.claim': True,
                 'lightweight.claim': False,
@@ -157,6 +162,22 @@ class KeyCloak(DriverBase):
                 'jsonType.label': 'String',
                 'multivalued': True,
                 'aggregate.attrs': True,
+                'id.token.claim': True,
+                'access.token.claim': True,
+                'lightweight.claim': False,
+                'userinfo.token.claim': True,
+                'introspection.token.claim': True
+            }
+        })
+        await self.post(f'/admin/realms/{realmId}/client-scopes/{scopeId}/protocol-mappers/models', {
+            'name': self._kcAttrRole,
+            'protocol': 'openid-connect',
+            'protocolMapper': 'oidc-usermodel-realm-role-mapper',
+            'config': {
+                'claim.name': self._kcAttrRole,
+                'usermodel.realmRoleMapping.rolePrefix': '',
+                'jsonType.label': 'String',
+                'multivalued': True,
                 'id.token.claim': True,
                 'access.token.claim': True,
                 'lightweight.claim': False,
@@ -253,7 +274,10 @@ class KeyCloak(DriverBase):
         await self.put(f'/admin/realms/{realmId}/clients/{clientId}/default-client-scopes/{scopeId}', {})
 
         await self.put(f'/admin/realms/{realmId}', {
-            'accessTokenLifespan': 1800,
+            'ssoSessionIdleTimeout': self._kcSsoSessionIdle,
+            'ssoSessionMaxLifespan': self._kcSsoSessionMax,
+            'accessTokenLifespan': self._kcSsoTokenLife,
+            'accessTokenLifespanForImplicitFlow': self._kcSsoTokenLife,
             'revokeRefreshToken': True
         })
         return await self.readRealm(realmId)

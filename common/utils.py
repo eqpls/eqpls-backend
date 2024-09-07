@@ -8,6 +8,7 @@ Equal Plus
 # Import
 #===============================================================================
 import sys
+import base64
 import random
 import string
 import logging
@@ -84,3 +85,10 @@ def getSharesArray(arr1, arr2):
 
 def getRandomString(length):
     return random.choice(string.ascii_letters) + ''.join(random.choice(_LETTER_CANDIDATES) for _ in range(length - 1))
+
+def encodeBase64(data):
+    return base64.b64encode(data.encode('utf-8')).decode('ascii')
+
+def decodeBase64(data):
+    return base64.b64decode(data.encode('ascii')).decode('utf-8')
+
