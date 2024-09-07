@@ -118,22 +118,24 @@ class SchemaInfo(BaseModel):
     service:str = ''
     major:int = 1
     minor:int = 1
+
     name:str = ''
     description:str = ''
     module:str = ''
+    tags:list[str] = []
+
     sref:str = ''
     dref:str = ''
     path:str = ''
-    tags:list[str] = []
-    
+
     aaa:int = AAA.FREE
-    rest:int = CRUD.CRUD
     crud:int = CRUD.CRUD
     layer:int = LAYER.CSD
-    
+
     cache:Any | None = None
     search:Any | None = None
     database:Any | None = None
+
     createHandler:Any | None = None
     updateHandler:Any | None = None
     deleteHandler:Any | None = None
@@ -145,9 +147,9 @@ _TypeT = TypeVar('_TypeT', bound=type)
 def SchemaConfig(
     version:int,
     description:str='',
+    aaa:int=AAA.FREE,
     crud:int=CRUD.CRUD,
     layer:int=LAYER.CSD,
-    aaa:int=AAA.FREE,
     cache:Option | None=None,
     search:Option | None=None,
     database:Option | None=None
@@ -166,11 +168,11 @@ def SchemaConfig(
                 name=name,
                 description=description,
                 module=module,
-                sref=sref,
                 tags=tags,
+                sref=sref,
+                aaa=aaa,
                 crud=crud,
                 layer=layer,
-                aaa=aaa,
                 cache=cache if cache else Option(),
                 search=search if search else Option(),
                 database=database if database else Option()
@@ -226,7 +228,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         schemaInfo.major = version
         lowerSchemaRef = schemaInfo.sref.lower()
         schemaInfo.dref = snakecase(f'{lowerSchemaRef}.{version}.{schemaInfo.minor}')
-        schemaInfo.path = f'/{service}/' + pathcase(f'v{version}.{lowerSchemaRef}')
+        schemaInfo.path = f'/{service}/v{version}/{pathcase(lowerSchemaRef)}'
         if createHandler: schemaInfo.createHandler = createHandler
         if updateHandler: schemaInfo.updateHandler = updateHandler
         if deleteHandler: schemaInfo.deleteHandler = deleteHandler

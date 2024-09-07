@@ -18,23 +18,22 @@ class KeyCloak(DriverBase):
     def __init__(self, config):
         DriverBase.__init__(self, config)
 
-        self._kcEndpoint = config['default']['endpoint']
+        self._kcEndpoint = config['keycloak']['endpoint'] if config['keycloak']['endpoint'] else config['default']['endpoint']
         self._kcUsername = config['default']['system_access_key']
         self._kcPassword = config['default']['system_secret_key']
 
         self._kcHostname = config['keycloak']['hostname']
         self._kcHostport = int(config['keycloak']['hostport'])
 
-        self._kcRoleAttr = config['keycloak']['role_attr']
-        self._kcGroupAttr = config['keycloak']['group_attr']
+        self._kcAttrRole = config['keycloak']['attr_role']
+        self._kcAttrGroup = config['keycloak']['attr_group']
 
         self._kcFrontend = f'https://{self._kcEndpoint}'
         self._kcBaseUrl = f'http://{self._kcHostname}:{self._kcHostport}'
 
+        self._kcHeaders = None
         self._kcAccessToken = None
         self._kcRefreshToken = None
-        self._kcHeaders = None
-
 
     async def connect(self, *args, **kargs):
         async with AsyncRest(self._kcBaseUrl) as rest:
@@ -133,11 +132,11 @@ class KeyCloak(DriverBase):
             if scope['name'] == 'openid-client-scope': scopeId = scope['id']; break
         else: raise EpException(404, 'Could not find client scope')
         await self.post(f'/admin/realms/{realmId}/client-scopes/{scopeId}/protocol-mappers/models', {
-            'name': self._kcRoleAttr,
+            'name': self._kcAttrRole,
             'protocol': 'openid-connect',
             'protocolMapper': 'oidc-usermodel-realm-role-mapper',
             'config': {
-                'claim.name': self._kcRoleAttr,
+                'claim.name': self._kcAttrRole,
                 'usermodel.realmRoleMapping.rolePrefix': '',
                 'jsonType.label': 'String',
                 'multivalued': True,
@@ -149,12 +148,12 @@ class KeyCloak(DriverBase):
             }
         })
         await self.post(f'/admin/realms/{realmId}/client-scopes/{scopeId}/protocol-mappers/models', {
-            'name': self._kcGroupAttr,
+            'name': self._kcAttrGroup,
             'protocol': 'openid-connect',
             'protocolMapper': 'oidc-usermodel-attribute-mapper',
             'config': {
-                'claim.name': self._kcGroupAttr,
-                'user.attribute': self._kcGroupAttr,
+                'claim.name': self._kcAttrGroup,
+                'user.attribute': self._kcAttrGroup,
                 'jsonType.label': 'String',
                 'multivalued': True,
                 'aggregate.attrs': True,

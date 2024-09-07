@@ -31,6 +31,8 @@ class SECONDS:
     MONTH = 2592000
     # Year
     YEAR = 31536000
+    # Infinity
+    INFINITY = 3153600000
 
 
 class CRUD:

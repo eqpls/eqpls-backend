@@ -78,10 +78,10 @@ class BaseControl:
         if self.background: await runBackground(self.__background__())
         LOG.INFO('start background')
         self.api.add_api_route(
-            tags=['Internal Only'],
+            tags=['Module'],
             name='Health',
             methods=['GET'],
-            path='/internal/health',
+            path='/module/health',
             endpoint=self.__health__,
             response_model=ServiceHealth
         )
@@ -180,9 +180,6 @@ class UerpControl(BaseControl):
 
         await BaseControl.__startup__(self)
 
-        self.api.add_api_route(methods=['GET'], path=f'{self.uri}/v{self.version}/schema', endpoint=self.__describe_schema__, response_model=dict, tags=['Schema'], name='Get Schema Map')
-        LOG.INFO('register schema interface')
-
         await self.registerModel(
             schema=Account,
             createHandler=self._uerpAuth.createAccount,
@@ -211,12 +208,32 @@ class UerpControl(BaseControl):
             deleteHandler=self._uerpAuth.deleteOrg
         )
         LOG.INFO('register org interface')
+
         await self._uerpAuth.connect()
         LOG.INFO('connect auth driver')
-        self.api.add_api_route(methods=['GET'], path='/internal/authinfo', endpoint=self.__confirm_auth_info__, response_model=AuthInfo, tags=['Internal Only'], name='Check Auth Info')
-        LOG.INFO('register authinfo interface')
-        self.api.add_api_route(methods=['GET'], path='/internal/client/secret', endpoint=self.__get_client_secret__, response_model=str, tags=['Internal Only'], name='Get Client Secret')
-        LOG.INFO('register client secret interface')
+
+        self.api.add_api_route(methods=['GET'], path=f'{self.uri}/v{self.version}/schema', endpoint=self.__describe_schema__, response_model=dict, tags=['Schema'], name='Get Schema Map')
+        LOG.INFO('register schema interface')
+
+        for schema in self._uerpPathToSchemaMap.values():
+            schemaInfo = schema.getSchemaInfo()
+            internalPath = schemaInfo.path.replace(f'/{schemaInfo.service}/v{schemaInfo.major}/', f'/internal/v{schemaInfo.major}/')
+            self.api.add_api_route(methods=['GET'], path=internalPath, endpoint=self.__search_data_with_free__, response_model=List[schema], tags=['Supervisor Interface'], name=f'Search {schemaInfo.name}')
+            self.api.add_api_route(methods=['GET'], path=internalPath + '/count', endpoint=self.__count_data_with_free__, response_model=ModelCount, tags=['Supervisor Interface'], name=f'Count {schemaInfo.name}')
+            self.api.add_api_route(methods=['GET'], path=internalPath + '/{id}', endpoint=self.__read_data_with_free__, response_model=schema, tags=['Supervisor Interface'], name=f'Read {schemaInfo.name}')
+            self.__create_data_with_free__.__annotations__['model'] = schema
+            self.api.add_api_route(methods=['POST'], path=internalPath, endpoint=self.__create_data_with_free__, response_model=schema, tags=['Supervisor Interface'], name=f'Create {schemaInfo.name}')
+            self.__create_data_with_free__.__annotations__['model'] = BaseModel
+            self.__update_data_with_free__.__annotations__['model'] = schema
+            self.api.add_api_route(methods=['PUT'], path=internalPath + '/{id}', endpoint=self.__update_data_with_free__, response_model=schema, tags=['Supervisor Interface'], name=f'Update {schemaInfo.name}')
+            self.__update_data_with_free__.__annotations__['model'] = BaseModel
+            self.api.add_api_route(methods=['DELETE'], path=internalPath + '/{id}', endpoint=self.__delete_data_with_free__, response_model=ModelStatus, tags=['Supervisor Interface'], name=f'Delete {schemaInfo.name}')
+        LOG.INFO('register supervisor model interfaces')
+
+        self.api.add_api_route(methods=['GET'], path='/internal/authinfo', endpoint=self.__confirm_auth_info__, response_model=AuthInfo, tags=['Supervisor Interface'], name='Check Auth Info')
+        LOG.INFO('register supervisor authinfo interface')
+        self.api.add_api_route(methods=['GET'], path='/internal/client/secret', endpoint=self.__get_client_secret__, response_model=str, tags=['Supervisor Interface'], name='Get Client Secret')
+        LOG.INFO('register supervisor client secret interface')
 
     async def __shutdown__(self):
         await BaseControl.__shutdown__(self)
@@ -250,11 +267,11 @@ class UerpControl(BaseControl):
         self._uerpPathToSchemaMap[schemaInfo.path] = schema
 
         if AAA.checkAuthorization(schemaInfo.aaa):
-            if CRUD.checkRead(schemaInfo.rest):
+            if CRUD.checkRead(schemaInfo.crud):
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.__search_data_with_auth__, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.__count_data_with_auth__, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.__read_data_with_auth__, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
-            if CRUD.checkCreate(schemaInfo.rest):
+            if CRUD.checkCreate(schemaInfo.crud):
                 if AAA.checkGroup(schemaInfo.aaa):
                     self.__create_data_with_auth_by_group__.__annotations__['model'] = schema
                     self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.__create_data_with_auth_by_group__, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
@@ -263,7 +280,7 @@ class UerpControl(BaseControl):
                     self.__create_data_with_auth__.__annotations__['model'] = schema
                     self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.__create_data_with_auth__, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
                     self.__create_data_with_auth__.__annotations__['model'] = BaseModel
-            if CRUD.checkUpdate(schemaInfo.rest):
+            if CRUD.checkUpdate(schemaInfo.crud):
                 if AAA.checkGroup(schemaInfo.aaa):
                     self.__update_data_with_auth_by_group__.__annotations__['model'] = schema
                     self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.__update_data_with_auth_by_group__, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
@@ -272,25 +289,25 @@ class UerpControl(BaseControl):
                     self.__update_data_with_auth__.__annotations__['model'] = schema
                     self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.__update_data_with_auth__, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
                     self.__update_data_with_auth__.__annotations__['model'] = BaseModel
-            if CRUD.checkDelete(schemaInfo.rest):
+            if CRUD.checkDelete(schemaInfo.crud):
                 if AAA.checkGroup(schemaInfo.aaa):
                     self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.__delete_data_with_auth_by_group__, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
                 else:
                     self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.__delete_data_with_auth__, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
         else:
-            if CRUD.checkRead(schemaInfo.rest):
+            if CRUD.checkRead(schemaInfo.crud):
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.__search_data_with_free__, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.__count_data_with_free__, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.__read_data_with_free__, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
-            if CRUD.checkCreate(schemaInfo.rest):
+            if CRUD.checkCreate(schemaInfo.crud):
                 self.__create_data_with_free__.__annotations__['model'] = schema
                 self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.__create_data_with_free__, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
                 self.__create_data_with_free__.__annotations__['model'] = BaseModel
-            if CRUD.checkUpdate(schemaInfo.rest):
+            if CRUD.checkUpdate(schemaInfo.crud):
                 self.__update_data_with_free__.__annotations__['model'] = schema
                 self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.__update_data_with_free__, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
                 self.__update_data_with_free__.__annotations__['model'] = BaseModel
-            if CRUD.checkDelete(schemaInfo.rest):
+            if CRUD.checkDelete(schemaInfo.crud):
                 self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.__delete_data_with_free__, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
 
         return self
@@ -307,6 +324,7 @@ class UerpControl(BaseControl):
             schemaInfo = schema.getSchemaInfo()
             desc[schemaInfo.sref] = {
                 'name': schemaInfo.name,
+                'sref': schemaInfo.sref,
                 'description': schemaInfo.description,
                 'crud': {
                     'create': CRUD.checkCreate(schemaInfo.crud),

@@ -50,8 +50,8 @@ class AuthInfo(BaseModel):
 @SchemaConfig(
 version=1,
 aaa=AAA.AA,
-cache=Option(expire=SECONDS.HOUR),
-search=Option(expire=SECONDS.DAY))
+cache=Option(expire=SECONDS.INFINITY),
+search=Option(expire=SECONDS.INFINITY))
 class Org(BaseModel, BaseSchema):
 
     externalId: Key = ''
@@ -81,8 +81,8 @@ class Account(BaseModel, BaseSchema):
 @SchemaConfig(
 version=1,
 aaa=AAA.AA,
-cache=Option(expire=SECONDS.HOUR),
-search=Option(expire=SECONDS.DAY))
+cache=Option(expire=SECONDS.INFINITY),
+search=Option(expire=SECONDS.INFINITY))
 class Role(BaseModel, ProfSchema, BaseSchema):
 
     externalId:Key = ''
@@ -96,8 +96,8 @@ class Role(BaseModel, ProfSchema, BaseSchema):
 @SchemaConfig(
 version=1,
 aaa=AAA.AA,
-cache=Option(expire=SECONDS.HOUR),
-search=Option(expire=SECONDS.DAY))
+cache=Option(expire=SECONDS.INFINITY),
+search=Option(expire=SECONDS.INFINITY))
 class Group(BaseModel, ProfSchema, BaseSchema):
 
     externalId: Key = ''

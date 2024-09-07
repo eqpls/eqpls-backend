@@ -33,17 +33,13 @@ class AuthKeyCloakRedis(AuthDriverBase):
         self._authAdminUsername = config['default']['admin_username']
         self._authAdminPassword = config['default']['admin_password']
 
-        self._authRoleAttr = config['keycloak']['role_attr']
-        self._authRoleAdmin = config['keycloak']['role_admin']
-        self._authRoleUser = config['keycloak']['role_user']
-
-        self._authGroupAttr = config['keycloak']['group_attr']
+        self._authAttrRole = config['keycloak']['attr_role']
+        self._authAttrGroup = config['keycloak']['attr_group']
 
         self._authRefreshAuth = int(config['keycloak']['refresh_auth'])
-        self._authRefreshAttr = int(config['keycloak']['refresh_attr'])
-
         self._authRefresh = True
         self._authAuthMap = {}
+
         self._authDefaultUserRole = {}
         self._authDefaultUserGroup = {}
 
@@ -57,11 +53,12 @@ class AuthKeyCloakRedis(AuthDriverBase):
                 name=self._authOrg,
                 displayName=self._authOrgDisplayName
             ).createModel()
+        else:
+            await Org.searchModels(archive=True)
+            await Role.searchModels(archive=True)
+            await Group.searchModels(archive=True)
 
-        await runBackground(self.__refresh_org_map__())
         await runBackground(self.__refresh_auth_map__())
-        await runBackground(self.__refresh_role_map__())
-        await runBackground(self.__refresh_group_map__())
         return self
 
     async def disconnect(self):
@@ -69,25 +66,10 @@ class AuthKeyCloakRedis(AuthDriverBase):
         await self._authRedis.disconnect()
         await self._authKeyCloak.disconnect()
 
-    async def __refresh_org_map__(self):
-        while self._authRefresh:
-            await Org.searchModels(archive=True)
-            await asleep(self._authRefreshAttr)
-
     async def __refresh_auth_map__(self):
         while self._authRefresh:
             self._authAuthMap = {}
             await asleep(self._authRefreshAuth)
-
-    async def __refresh_role_map__(self):
-        while self._authRefresh:
-            await Role.searchModels(archive=True)
-            await asleep(self._authRefreshAttr)
-
-    async def __refresh_group_map__(self):
-        while self._authRefresh:
-            await Group.searchModels(archive=True)
-            await asleep(self._authRefreshAttr)
 
     async def getAuthInfo(self, org:str, token:str):
         if token in self._authAuthMap: return self._authAuthMap[token]
@@ -99,8 +81,8 @@ class AuthKeyCloakRedis(AuthDriverBase):
         else:
             if not org: org = self._authOrg
             userInfo = await self._authKeyCloak.getUserInfo(org, token)
-            roles = userInfo[self._authRoleAttr] if self._authRoleAttr in userInfo else []
-            groups = userInfo[self._authGroupAttr] if self._authGroupAttr in userInfo else []
+            roles = userInfo[self._authAttrRole] if self._authAttrRole in userInfo else []
+            groups = userInfo[self._authAttrGroup] if self._authAttrGroup in userInfo else []
             aclRead = []
             aclCreate = []
             aclUpdate = []
@@ -139,10 +121,10 @@ class AuthKeyCloakRedis(AuthDriverBase):
         kcRealm = await self._authKeyCloak.createRealm(realmId, org['displayName'])
         org['externalId'] = kcRealm['id']
 
-        roleAdmin = await Role(org=realmId, name=self._authRoleAdmin, displayName=self._authRoleAdmin, admin=True).createModel()
+        roleAdmin = await Role(org=realmId, name='admin', displayName='Admin', admin=True).createModel()
         roleAdminId = str(roleAdmin.id)
 
-        await Role(org=realmId, name=realmId, displayName=self._authRoleUser).createModel()
+        await Role(org=realmId, name=realmId, displayName='All Users').createModel()
         await Group(org=realmId, name=realmId, displayName='All Users').createModel()
 
         systemUser = await Account(
@@ -204,7 +186,7 @@ class AuthKeyCloakRedis(AuthDriverBase):
             realmId=role['org'],
             name=roleId,
             description=role['name'],
-            attributes={self._authRoleAttr: [roleId]}
+            attributes={self._authAttrRole: [roleId]}
         )
         role['externalId'] = kcRole['id']
         return role
@@ -225,7 +207,7 @@ class AuthKeyCloakRedis(AuthDriverBase):
         kcGroup = await self._authKeyCloak.createGroup(
             realmId=group['org'],
             name=groupId,
-            attributes={self._authGroupAttr: [groupId]}
+            attributes={self._authAttrGroup: [groupId]}
         )
         group['externalId'] = kcGroup['id']
         return group
