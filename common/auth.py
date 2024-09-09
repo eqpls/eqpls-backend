@@ -67,11 +67,11 @@ search=Option(expire=SECONDS.DAY))
 class Account(BaseModel, BaseSchema):
 
     externalId: Key = ''
-    username: Key = ''
+    username: Key
+    email: str
+    givenName: str
+    familyName: str
     displayName: str = ''
-    givenName: str = ''
-    familyName: str = ''
-    email: str = ''
     enabled: bool = False
     roles: list[str] = []
     groups: list[str] = []
