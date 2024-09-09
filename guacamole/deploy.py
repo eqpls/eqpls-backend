@@ -39,7 +39,7 @@ def parameters(module, path, config):
     kc_auth_endpoint = f'https://{endpoint}/auth/realms/{tenant}/protocol/openid-connect/auth'
     kc_jwks_endpoint = f'http://{kc_hostname}:{kc_hostport}/realms/{tenant}/protocol/openid-connect/certs'
     kc_issuer = f'https://{endpoint}/auth/realms/{tenant}'
-    kc_redirect_uri = f'https://{endpoint}'
+    kc_redirect_uri = f'https://{endpoint}/static/html/terminal.html'
 
     environment = [
         f'GUACD_HOSTNAME={guacd_hostname}',
