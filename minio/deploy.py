@@ -56,7 +56,10 @@ def parameters(module, path, config):
     ]
 
     ports = {
-        f'{hostport}/tcp': (hostaddr, hostport)
+        # f'{hostport}/tcp': (hostaddr, hostport)
+        '9000/tcp': ('0.0.0.0', 9000),
+        # '9001/tcp': ('0.0.0.0', 9001),
+        # '0.0.0.0:9022/tcp': ('0.0.0.0', 9022)
     } if export else {}
 
     volumes = [
@@ -78,7 +81,7 @@ def parameters(module, path, config):
         'MaximumRetryCount': 5
     }
 
-    command = 'server --console-address :9001 /data'
+    command = 'server --address="0.0.0.0:9000" --console-address=":9001" /data'
     options = {
         'detach': True,
         'name': f'{tenant}-{module}',
