@@ -36,6 +36,11 @@ def parameters(module, path, config):
 
     upstreams = ''
     locations = ''
+    servers = ''
+    
+    ports = {
+        f'{hostport}/tcp': (hostaddr, hostport)
+    } if export else {}
 
     if 'guacamole' in modules:
         upstreams += '''
@@ -46,15 +51,19 @@ def parameters(module, path, config):
         location /guacamole/ { proxy_pass http://guacamole/guacamole/; }
 '''
 
-    if 'minio' in modules:
+    if 'objstore' in modules:
+        if export: ports['9000/tcp'] = (hostaddr, 9000)
+        
         upstreams += '''
-    upstream s3 { server minio:9000; }
+    upstream objstore-s3 { server objstore:9000; }
 
-    upstream minio { server minio:9001; }
+    upstream objstore-ui { server objstore:9001; }
 '''
-
-        locations += '''
-        location /s3/ {
+        servers += '''
+    server {
+        listen 9000 ssl;
+        server_name %s;
+        location / {
             proxy_set_header Host $http_host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -63,21 +72,19 @@ def parameters(module, path, config):
             proxy_connect_timeout 300;
             proxy_http_version 1.1;
             chunked_transfer_encoding off;
-            proxy_pass http://s3/;
+            proxy_pass http://objstore-s3/;
         }
+    }
+''' % endpoint
 
-        location /minio/ui/cookie_to_data {
-            default_type application/json;
-            return 200 '{"token":"$cookie_token"}';
-        }
-
-        location /minio/ui/oauth_callback {
+        locations += '''
+        location /objstore/oauth/callback {
             default_type application/json;
             return 200 '{"code":"$arg_code","state":"$arg_state"}';
         }
 
-        location /minio/ui/ {
-            rewrite ^/minio/ui/(.*) /$1 break;
+        location /objstore/ {
+            rewrite ^/objstore/(.*) /$1 break;
             proxy_set_header Host $http_host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -89,7 +96,7 @@ def parameters(module, path, config):
             proxy_connect_timeout 300;
             proxy_http_version 1.1;
             chunked_transfer_encoding off;
-            proxy_pass http://minio;
+            proxy_pass http://objstore-ui;
         }
 '''
 
@@ -151,18 +158,16 @@ http {
 %s
         location / { alias /webroot/; }
     }
+    
+%s
 
     upstream keycloak { server keycloak:8080; }
 %s
 }
-""" % (endpoint, locations, upstreams))
+""" % (endpoint, locations, servers, upstreams))
 
     environment = [
     ]
-
-    ports = {
-        f'{hostport}/tcp': (hostaddr, hostport)
-    } if export else {}
 
     volumes = [
         f'{path}/{module}/conf.d/nginx.conf:/etc/nginx/nginx.conf',

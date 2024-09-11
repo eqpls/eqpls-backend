@@ -24,8 +24,8 @@ class Minio(DriverBase):
         self._mioAccessKey = config['default']['system_access_key']
         self._mioSecretKey = config['default']['system_secret_key']
 
-        self._mioHostname = config['minio']['hostname']
-        self._mioHostport = int(config['minio']['hostport'])
+        self._mioHostname = config['objstore']['hostname']
+        self._mioHostport = int(config['objstore']['hostport'])
 
         self._mioBaseUrl = f'http://{self._mioHostname}:{self._mioHostport}'
         self._mioSession = AsyncRest(self._mioBaseUrl)

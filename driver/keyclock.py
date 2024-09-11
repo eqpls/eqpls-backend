@@ -244,9 +244,9 @@ class KeyCloak(DriverBase):
         await self.put(f'/admin/realms/{realmId}/clients/{clientId}/default-client-scopes/{scopeId}', {})
 
         await self.post(f'/admin/realms/{realmId}/clients', {
-            'clientId': 'minio',
-            'name': 'minio',
-            'description': 'minio',
+            'clientId': 'objstore',
+            'name': 'objstore',
+            'description': 'objstore',
             'protocol': 'openid-connect',
             'publicClient': False,
             'rootUrl': self._kcFrontend,
@@ -268,7 +268,7 @@ class KeyCloak(DriverBase):
             }
         })
         for client in await self.get(f'/admin/realms/{realmId}/clients'):
-            if client['clientId'] == 'minio':
+            if client['clientId'] == 'objstore':
                 clientId = client['id']; break
         else: raise EpException(404, 'Could not find client')
         await self.put(f'/admin/realms/{realmId}/clients/{clientId}/default-client-scopes/{scopeId}', {})
