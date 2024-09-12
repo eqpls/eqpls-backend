@@ -9,6 +9,13 @@ Created on 2024. 2. 8.
 #===============================================================================
 from common import EpException, AsyncRest, DriverBase
 
+#===============================================================================
+# Constants
+#===============================================================================
+KEYCLOAK_SESSION_IDLE_SEC = 7200
+KEYCLOAK_SESSION_MAX_SEC = 43200
+KEYCLOAK_TOKEN_LIFE_SPAN_SEC = 7200
+
 
 #===============================================================================
 # Implement
@@ -18,22 +25,23 @@ class KeyCloak(DriverBase):
     def __init__(self, config):
         DriverBase.__init__(self, config)
 
-        self._kcEndpoint = config['keycloak']['endpoint'] if config['keycloak']['endpoint'] else config['default']['endpoint']
-        self._kcUsername = config['default']['system_access_key']
-        self._kcPassword = config['default']['system_secret_key']
+        defConf = config['default']
+        kcConf = config['keycloak']
 
-        self._kcHostname = config['keycloak']['hostname']
-        self._kcHostport = int(config['keycloak']['hostport'])
+        self._kcEndpoint = defConf['endpoint']
+        self._kcEndpointUrl = f'https://{self._kcEndpoint}'
+        self._origins = [origin.strip() for origin in defConf['origins'].split(',')] if 'origins' in defConf and defConf['origins'] else []
+        if self._origins:
+            if '*' in self._origins: self._origins = ['*']
+            elif self._kcEndpointUrl not in self._origins: self._origins.append(self._kcEndpointUrl)
 
-        self._kcAttrRole = config['keycloak']['attr_role']
-        self._kcAttrGroup = config['keycloak']['attr_group']
+        self._kcUsername = defConf['system_access_key']
+        self._kcPassword = defConf['system_secret_key']
 
-        self._kcSsoSessionIdle = int(config['keycloak']['sso_session_idle'])
-        self._kcSsoSessionMax = int(config['keycloak']['sso_session_max'])
-        self._kcSsoTokenLife = int(config['keycloak']['sso_token_life'])
-
-        self._kcFrontend = f'https://{self._kcEndpoint}'
-        self._kcBaseUrl = f'http://{self._kcHostname}:{self._kcHostport}'
+        self._kcHostname = kcConf['hostname']
+        self._kcHostport = int(kcConf['hostport'])
+        self._kcBaseUrl = f'http://{self._kcHostname}:{self._kcHostport}/auth'
+        self._kcTheme = kcConf['theme'] if 'theme' in kcConf and kcConf['theme'] else None
 
         self._kcHeaders = None
         self._kcAccessToken = None
@@ -120,6 +128,16 @@ class KeyCloak(DriverBase):
             'displayName': displayName,
             'enabled': True
         })
+
+        realm = await self.get(f'/admin/realms/{realmId}')
+        realm['resetPasswordAllowed'] = True
+        await self.put(f'/admin/realms/{realmId}', realm)
+
+        if self._kcTheme:
+            realm = await self.get(f'/admin/realms/{realmId}')
+            realm['loginTheme'] = self._kcTheme
+            await self.put(f'/admin/realms/{realmId}/ui-ext', realm)
+
         await self.post(f'/admin/realms/{realmId}/client-scopes', {
             'name': 'openid-client-scope',
             'description': 'openid-client-scope',
@@ -153,12 +171,12 @@ class KeyCloak(DriverBase):
             }
         })
         await self.post(f'/admin/realms/{realmId}/client-scopes/{scopeId}/protocol-mappers/models', {
-            'name': self._kcAttrGroup,
+            'name': 'groups',
             'protocol': 'openid-connect',
             'protocolMapper': 'oidc-usermodel-attribute-mapper',
             'config': {
-                'claim.name': self._kcAttrGroup,
-                'user.attribute': self._kcAttrGroup,
+                'claim.name': 'groups',
+                'user.attribute': 'groups',
                 'jsonType.label': 'String',
                 'multivalued': True,
                 'aggregate.attrs': True,
@@ -170,11 +188,11 @@ class KeyCloak(DriverBase):
             }
         })
         await self.post(f'/admin/realms/{realmId}/client-scopes/{scopeId}/protocol-mappers/models', {
-            'name': self._kcAttrRole,
+            'name': 'roles',
             'protocol': 'openid-connect',
             'protocolMapper': 'oidc-usermodel-realm-role-mapper',
             'config': {
-                'claim.name': self._kcAttrRole,
+                'claim.name': 'roles',
                 'usermodel.realmRoleMapping.rolePrefix': '',
                 'jsonType.label': 'String',
                 'multivalued': True,
@@ -194,9 +212,10 @@ class KeyCloak(DriverBase):
             'description': realmId,
             'protocol': 'openid-connect',
             'publicClient': True,
-            'rootUrl': self._kcFrontend,
-            'baseUrl': self._kcFrontend,
+            'rootUrl': self._kcEndpointUrl,
+            'baseUrl': self._kcEndpointUrl,
             'redirectUris': ['*'],
+            'webOrigins': self._origins,
             'authorizationServicesEnabled': False,
             'serviceAccountsEnabled': False,
             'implicitFlowEnabled': False,
@@ -222,9 +241,10 @@ class KeyCloak(DriverBase):
             'description': 'guacamole',
             'protocol': 'openid-connect',
             'publicClient': True,
-            'rootUrl': self._kcFrontend,
-            'baseUrl': self._kcFrontend,
+            'rootUrl': self._kcEndpointUrl,
+            'baseUrl': self._kcEndpointUrl,
             'redirectUris': ['*'],
+            'webOrigins': self._origins,
             'authorizationServicesEnabled': False,
             'serviceAccountsEnabled': False,
             'implicitFlowEnabled': True,
@@ -244,14 +264,15 @@ class KeyCloak(DriverBase):
         await self.put(f'/admin/realms/{realmId}/clients/{clientId}/default-client-scopes/{scopeId}', {})
 
         await self.post(f'/admin/realms/{realmId}/clients', {
-            'clientId': 'objstore',
-            'name': 'objstore',
-            'description': 'objstore',
+            'clientId': 'minio',
+            'name': 'minio',
+            'description': 'minio',
             'protocol': 'openid-connect',
             'publicClient': False,
-            'rootUrl': self._kcFrontend,
-            'baseUrl': self._kcFrontend,
+            'rootUrl': self._kcEndpointUrl,
+            'baseUrl': self._kcEndpointUrl,
             'redirectUris': ['*'],
+            'webOrigins': self._origins,
             'authorizationServicesEnabled': False,
             'serviceAccountsEnabled': False,
             'implicitFlowEnabled': False,
@@ -268,16 +289,16 @@ class KeyCloak(DriverBase):
             }
         })
         for client in await self.get(f'/admin/realms/{realmId}/clients'):
-            if client['clientId'] == 'objstore':
+            if client['clientId'] == 'minio':
                 clientId = client['id']; break
         else: raise EpException(404, 'Could not find client')
         await self.put(f'/admin/realms/{realmId}/clients/{clientId}/default-client-scopes/{scopeId}', {})
 
         await self.put(f'/admin/realms/{realmId}', {
-            'ssoSessionIdleTimeout': self._kcSsoSessionIdle,
-            'ssoSessionMaxLifespan': self._kcSsoSessionMax,
-            'accessTokenLifespan': self._kcSsoTokenLife,
-            'accessTokenLifespanForImplicitFlow': self._kcSsoTokenLife,
+            'ssoSessionIdleTimeout': KEYCLOAK_SESSION_IDLE_SEC,
+            'ssoSessionMaxLifespan': KEYCLOAK_SESSION_MAX_SEC,
+            'accessTokenLifespan': KEYCLOAK_TOKEN_LIFE_SPAN_SEC,
+            'accessTokenLifespanForImplicitFlow': KEYCLOAK_TOKEN_LIFE_SPAN_SEC,
             'revokeRefreshToken': True
         })
         return await self.readRealm(realmId)

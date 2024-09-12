@@ -13,6 +13,11 @@ from driver.keyclock import KeyCloak
 from driver.redis import RedisAuthn
 from driver.minio import Minio
 
+#===============================================================================
+# Constants
+#===============================================================================
+REFRESH_AUTH_SEC = 30
+
 
 #===============================================================================
 # Implement
@@ -35,10 +40,6 @@ class KeycloakRedisMinio(AuthDriverBase):
         self._authAdminUsername = config['default']['admin_username']
         self._authAdminPassword = config['default']['admin_password']
 
-        self._authAttrRole = config['keycloak']['attr_role']
-        self._authAttrGroup = config['keycloak']['attr_group']
-
-        self._authRefreshAuth = int(config['keycloak']['refresh_auth'])
         self._authRefresh = True
         self._authAuthMap = {}
 
@@ -71,7 +72,7 @@ class KeycloakRedisMinio(AuthDriverBase):
     async def __refresh_auth_map__(self):
         while self._authRefresh:
             self._authAuthMap = {}
-            await asleep(self._authRefreshAuth)
+            await asleep(REFRESH_AUTH_SEC)
 
     async def getAuthInfo(self, org:str, token:str):
         if token in self._authAuthMap: return self._authAuthMap[token]
@@ -83,8 +84,8 @@ class KeycloakRedisMinio(AuthDriverBase):
         else:
             if not org: org = self._authOrg
             userInfo = await self._authKeyCloak.getUserInfo(org, token)
-            roles = userInfo[self._authAttrRole] if self._authAttrRole in userInfo else []
-            groups = userInfo[self._authAttrGroup] if self._authAttrGroup in userInfo else []
+            roles = userInfo['roles'] if 'roles' in userInfo else []
+            groups = userInfo['groups'] if 'groups' in userInfo else []
             aclRead = []
             aclCreate = []
             aclUpdate = []
@@ -134,9 +135,9 @@ class KeycloakRedisMinio(AuthDriverBase):
         return self._authDefaultUserGroup[org]
 
     async def createBucket(self, bucket:dict):
-        name = bucket['name']
+        bucketId = bucket['id']
         owner = bucket['owner']
-        externalId = f'{owner}.{name}'
+        externalId = f'{owner}.{bucketId}'
 
         payload = {
             'name': externalId,
@@ -256,7 +257,7 @@ class KeycloakRedisMinio(AuthDriverBase):
             realmId=role['org'],
             name=roleId,
             description=role['name'],
-            attributes={self._authAttrRole: [roleId]}
+            attributes={'roles': [roleId]}
         )
         role['externalId'] = kcRole['id']
         return role
@@ -280,14 +281,10 @@ class KeycloakRedisMinio(AuthDriverBase):
             name=groupId,
             attributes={
                 'policy': [groupId],
-                self._authAttrGroup: [groupId]
+                'groups': [groupId]
             }
         )
-        LOG.DEBUG(group['objectPolicy'])
-        if group['objectPolicy']:
-            LOG.DEBUG(1)
-            await self._authMinio.createPolicy(groupId)
-            LOG.DEBUG(2)
+        if group['objectPolicy']: await self._authMinio.createPolicy(groupId)
         group['externalId'] = kcGroup['id']
         return group
 

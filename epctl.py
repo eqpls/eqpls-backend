@@ -20,101 +20,139 @@ import configparser
 #===============================================================================
 # load configs
 path = os.path.dirname(os.path.realpath(__file__))
+os.chdir(path)
 config = configparser.ConfigParser(interpolation=configparser.ExtendedInterpolation())
 config.read(f'{path}/project.ini', encoding='utf-8')
+config = config._sections
 client = docker.from_env()
-default = config['default']
+defconf = config['default']
 
-title = default['title']
-tenant = default['tenant']
-endpoint = default['endpoint']
-version = default['version']
-stage = default['stage']
-system_access_key = default['system_access_key']
-system_secret_key = default['system_secret_key']
-admin_username = default['admin_username']
-admin_password = default['admin_password']
-health_check_interval = int(default['health_check_interval'])
-health_check_timeout = int(default['health_check_timeout'])
-health_check_retries = int(default['health_check_retries'])
-modules = [m.strip() for m in default['modules'].split(',')]
+title = defconf['title']
+tenant = defconf['tenant']
+domain = defconf['domain']
+endpoint = defconf['endpoint']
+
+version = defconf['version']
+stage = defconf['stage']
+
+system_access_key = defconf['system_access_key']
+system_secret_key = defconf['system_secret_key']
+admin_username = defconf['admin_username']
+admin_password = defconf['admin_password']
+
+health_check_interval = defconf['health_check_interval']
+health_check_timeout = defconf['health_check_timeout']
+health_check_retries = defconf['health_check_retries']
+
+modules = [m.strip() for m in defconf['modules'].split(',')]
 
 
 #===============================================================================
 # Container Control
 #===============================================================================
 # build
-def build(module): client.images.build(nocache=True, rm=True, path=f'{path}/{module}', tag=f'{tenant}/{module}:{version}')
+def build(module): client.images.build(nocache=True, rm=True, path=f'{path}/{module}', tag=f'{tenant}/{module}:{stage}-v{version}')
 
 
 # deploy
 def deploy(module):
     try: os.mkdir(f'{path}/{module}/conf.d')
     except: pass
-    try: os.mkdir(f'{path}/{module}/data.d')
-    except: pass
-    try: os.mkdir(f'{path}/{module}/back.d')
+    try: os.mkdir(f'{path}/{module}/test.d')
     except: pass
 
-    mod = importlib.import_module(f'{module}.deploy')
-    image, command, options, post_exec = mod.parameters(module, path, config)
+    importlib.import_module(f'{module}.deploy').config(path, module, config)
+
+    modconf = config[module]
+    envconf = config[f'{module}:environment']
+    portconf = config[f'{module}:ports']
+    volconf = config[f'{module}:volumes']
+    healthconf = config[f'{module}:healthcheck']
+    if 'test' not in healthconf: healthconf['test'] = 'echo "OK" || exit 1'
+    if 'interval' not in healthconf: healthconf['interval'] = health_check_interval
+    if 'timeout' not in healthconf: healthconf['timeout'] = health_check_timeout
+    if 'retries' not in healthconf: healthconf['retries'] = health_check_retries
+
+    hostname = modconf['hostname']
+    memory = modconf['memory'] if 'memory' in modconf else None
+    command = modconf['command'] if 'command' in modconf and modconf['command'] else None
+    postcmd = modconf['postcmd'] if 'postcmd' in modconf and modconf['postcmd'] else None
+
+    environment = [f'{k}={v}' for k, v in envconf.items()]
+
+    ports = {}
+    for internal, external in portconf.items():
+        external = external.split(':')
+        ports[internal] = (external[0], external[1])
+
+    volumes = [f'{os.path.abspath(hostpath)}:{contpath}' for hostpath, contpath in volconf.items()]
+    if stage == 'dev': volumes.append(f'{path}/{module}/test.d:/test.d',)
+
+    healthcheck = {}
+    if healthconf:
+        healthcheck['test'] = healthconf['test']
+        healthcheck['interval'] = int(healthconf['interval']) * 1000000000
+        healthcheck['timeout'] = int(healthconf['timeout']) * 1000000000
+        healthcheck['retries'] = int(healthconf['retries'])
+
+    options = {
+        'detach': True,
+        'name': f'{tenant}-{module}',
+        'hostname': hostname,
+        'network': tenant,
+        'mem_limit': memory,
+        'environment': environment,
+        'ports': ports,
+        'volumes': volumes,
+        'healthcheck': healthcheck,
+    }
 
     container = client.containers.run(
-        image=image,
+        image=f'{tenant}/{module}:{stage}-v{version}',
         command=command,
         **options
     )
 
+    print(f'[{module}] check status .', end='', flush=True)
     while True:
         time.sleep(1)
         container.reload()
-        print('check desire status of container')
+        print('.', end='', flush=True)
         if container.status != 'running':
-            print('container was exited')
+            print(f'\n[{module}] was exited', flush=True)
             exit(1)
         if 'Health' in container.attrs['State'] and container.attrs['State']['Health']['Status'] == 'healthy':
-            print('container is healthy')
-            if post_exec: container.exec_run(post_exec)
+            print(' [ OK ]', flush=True)
+            if postcmd: container.exec_run(postcmd)
             break
 
 
 # start
 def start(module):
-    try:
-        for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.start()
-    except: pass
+    for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.start()
 
 
 # restart
 def restart(module):
-    try:
-        for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.restart()
-    except: pass
+    for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.restart()
 
 
 # stop
 def stop(module):
-    try:
-        for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.stop()
-    except: pass
+    for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.stop()
 
 
 # clean
 def clean(module):
     for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.remove(v=True, force=True)
     shutil.rmtree(f'{path}/{module}/conf.d', ignore_errors=True)
-    shutil.rmtree(f'{path}/{module}/data.d', ignore_errors=True)
 
 
 # purge
 def purge(module):
-    try:
-        for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.remove(v=True, force=True)
-    except: pass
+    clean(module)
     try: client.images.remove(image=f'{tenant}/{module}:{version}', force=True)
     except: pass
-    shutil.rmtree(f'{path}/{module}/conf.d', ignore_errors=True)
-    shutil.rmtree(f'{path}/{module}/data.d', ignore_errors=True)
 
 
 #===============================================================================

@@ -170,4 +170,5 @@ cython_debug/
 conf.d
 data.d
 back.d
+test.d
 test.py
