@@ -6,8 +6,7 @@ Equal Plus
 
 def config(path, module, config):
     defconf = config['default']
-    modconf = config[module]
+    envconf = config[f'{module}:environment']
 
-    system_access_key = defconf['system_access_key']
-    system_secret_key = defconf['system_secret_key']
-    modconf['postcmd'] = f'/usr/share/elasticsearch/bin/elasticsearch-users useradd {system_access_key} -p "{system_secret_key}" -r superuser -s'
+    envconf['EQPLS_SYSTEM_ACCESS_KEY'] = defconf['system_access_key']
+    envconf['EQPLS_SYSTEM_SECRET_KEY'] = defconf['system_secret_key']

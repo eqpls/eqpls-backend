@@ -7,7 +7,8 @@ Equal Plus
 #===============================================================================
 # Import
 #===============================================================================
-from common import asleep, mergeArray, getNewsAndDelsArray, runBackground, EpException
+import json
+from common import asleep, mergeArray, getNewsAndDelsArray, getRandomLower, runBackground, EpException
 from common import AuthDriverBase, AuthInfo, Org, Account, Role, Group, Reference
 from driver.keyclock import KeyCloak
 from driver.redis import RedisAuthn
@@ -31,12 +32,13 @@ class KeycloakRedisMinio(AuthDriverBase):
         self._authRedis = RedisAuthn(config)
         self._authMinio = Minio(config)
 
-        self._authSystemUsername = config['default']['system_access_key']
-        self._authSystemPassword = config['default']['system_secret_key']
-
         self._authOrg = config['default']['tenant']
         self._authOrgDisplayName = config['default']['title']
         self._authOrgDomain = config['default']['domain']
+        self._authEndpoint = config['default']['endpoint']
+
+        self._authSystemUsername = config['default']['system_access_key']
+        self._authSystemPassword = config['default']['system_secret_key']
         self._authAdminUsername = config['default']['admin_username']
         self._authAdminPassword = config['default']['admin_password']
 
@@ -135,10 +137,9 @@ class KeycloakRedisMinio(AuthDriverBase):
         return self._authDefaultUserGroup[org]
 
     async def createBucket(self, bucket:dict):
-        bucketId = bucket['id']
         owner = bucket['owner']
-        externalId = f'{owner}.{bucketId}'
-
+        if owner == await self.getDefaultUserGroup(bucket['org']): raise EpException(403, 'Forbidden')
+        externalId = f'{owner}.{getRandomLower(8)}'
         payload = {
             'name': externalId,
             'locking': False,
@@ -155,8 +156,8 @@ class KeycloakRedisMinio(AuthDriverBase):
                 'quota_type': 'hard',
                 'amount': quota * 1073741824
             }
-        await self._authMinio.post('/api/v1/buckets', payload)
 
+        await self._authMinio.post('/api/v1/buckets', payload)
         bucket['externalId'] = externalId
         return bucket
 
@@ -196,7 +197,22 @@ class KeycloakRedisMinio(AuthDriverBase):
         self._authDefaultUserRole[realmId] = str(defaultUserRole.id)
 
         defaultUserGroup = await Group(org=realmId, name='users', displayName='Users', type='default', objectPolicy=False).createModel()
-        self._authDefaultUserGroup[realmId] = str(defaultUserGroup.id)
+        defaultUserGroupId = str(defaultUserGroup.id)
+        self._authDefaultUserGroup[realmId] = defaultUserGroupId
+
+        await self._authMinio.post('/api/v1/policies', {
+            'name': defaultUserGroupId,
+            'policy': json.dumps({
+                'Version': '2012-10-17',
+                'Statement': [
+                    {
+                        'Effect': 'Allow',
+                        'Action': ['s3:*'],
+                        'Resource': ['arn:aws:s3:::${jwt:preferred_username}.*/*']
+                    }
+                ]
+            })
+        })
 
         systemUser = await Account(
             org=realmId,
@@ -225,6 +241,15 @@ class KeycloakRedisMinio(AuthDriverBase):
             detail=Reference()
         ).createModel()
         await self.updatePassword(adminUser.model_dump(), self._authAdminPassword)
+
+        minioSecret = await self._authKeyCloak.getClientSecret(realmId, 'minio')
+        await self._authMinio.post('/api/v1/idp/openid', {
+            'name': self._authOrgDisplayName,
+            'input': f'config_url=http://{self._authKeyCloak._kcHostname}:{self._authKeyCloak._kcHostport}/auth/realms/{realmId}/.well-known/openid-configuration client_id=minio client_secret={minioSecret} display_name={self._authOrgDisplayName} scopes=openid redirect_uri=https://{self._authEndpoint}/minio/oauth/callback '
+        })
+        try: await self._authMinio.post('/api/v1/service/restart', {})
+        except Exception as e:
+            LOG.DEBUG(e)
 
         return org
 

@@ -22,6 +22,7 @@ import configparser
 path = os.path.dirname(os.path.realpath(__file__))
 os.chdir(path)
 config = configparser.ConfigParser(interpolation=configparser.ExtendedInterpolation())
+config.optionxform = str
 config.read(f'{path}/project.ini', encoding='utf-8')
 config = config._sections
 client = docker.from_env()
@@ -129,12 +130,36 @@ def deploy(module):
 
 # start
 def start(module):
-    for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.start()
+    for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}):
+        container.start()
+        print(f'[{module}] check status .', end='', flush=True)
+        while True:
+            time.sleep(1)
+            container.reload()
+            print('.', end='', flush=True)
+            if container.status != 'running':
+                print(f'\n[{module}] was exited', flush=True)
+                exit(1)
+            if 'Health' in container.attrs['State'] and container.attrs['State']['Health']['Status'] == 'healthy':
+                print(' [ OK ]', flush=True)
+                break
 
 
 # restart
 def restart(module):
-    for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.restart()
+    for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}):
+        container.restart()
+        print(f'[{module}] check status .', end='', flush=True)
+        while True:
+            time.sleep(1)
+            container.reload()
+            print('.', end='', flush=True)
+            if container.status != 'running':
+                print(f'\n[{module}] was exited', flush=True)
+                exit(1)
+            if 'Health' in container.attrs['State'] and container.attrs['State']['Health']['Status'] == 'healthy':
+                print(' [ OK ]', flush=True)
+                break
 
 
 # stop
@@ -146,12 +171,13 @@ def stop(module):
 def clean(module):
     for container in client.containers.list(all=True, filters={'name': f'{tenant}-{module}'}): container.remove(v=True, force=True)
     shutil.rmtree(f'{path}/{module}/conf.d', ignore_errors=True)
+    shutil.rmtree(f'{path}/{module}/data.d', ignore_errors=True)
 
 
 # purge
 def purge(module):
     clean(module)
-    try: client.images.remove(image=f'{tenant}/{module}:{version}', force=True)
+    try: client.images.remove(image=f'{tenant}/{module}:{stage}-v{version}', force=True)
     except: pass
 
 

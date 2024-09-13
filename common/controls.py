@@ -709,8 +709,8 @@ class UerpControl(BaseControl):
 
         schema = model.__class__
         schemaInfo = schema.getSchemaInfo()
-
         groupId = str(groupId)
+
         if not authInfo.checkAdmin():
             if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkCreateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
             if not authInfo.checkGroup(groupId): raise EpException(403, 'Forbidden')

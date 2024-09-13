@@ -9,6 +9,8 @@ Equal Plus
 #===============================================================================
 import inspect
 import datetime
+import traceback
+
 from uuid import UUID
 from time import time as tstamp
 from pydantic import BaseModel
@@ -153,10 +155,19 @@ class ElasticSearch(ModelDriverBase):
             }
 
     async def create(self, schema:BaseSchema, *models):
-        if models: await helpers.async_bulk(self._esConn, self.__generate_bulk_data__(schema, models))
+        if models:
+            try: await helpers.async_bulk(self._esConn, self.__generate_bulk_data__(schema, models))
+            except helpers.BulkIndexError as e:
+                LOG.ERROR(e)
+                traceback.print_exc()
+                await self.create(schema, *models)
+            except Exception as e: raise e
 
     async def update(self, schema:BaseSchema, *models):
-        if models: await helpers.async_bulk(self._esConn, self.__generate_bulk_data__(schema, models))
+        if models:
+            try: await helpers.async_bulk(self._esConn, self.__generate_bulk_data__(schema, models))
+            except helpers.BulkIndexError as e: await self.update(schema, *models)
+            except Exception as e: raise e
 
     async def delete(self, schema:BaseSchema, id:str):
         await self._esConn.delete(index=schema.getSchemaInfo().dref, id=id)

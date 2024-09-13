@@ -4,7 +4,12 @@ Equal Plus
 @author: Hye-Churn Jang
 '''
 
+import os
+
 def config(path, module, config):
+    try: os.mkdir(f'{path}/{module}/data.d')
+    except: pass
+
     defconf = config['default']
     envconf = config[f'{module}:environment']
     volconf = config[f'{module}:volumes']

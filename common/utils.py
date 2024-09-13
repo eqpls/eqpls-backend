@@ -19,6 +19,8 @@ import configparser
 # Constnats
 #===============================================================================
 _LETTER_CANDIDATES = list(string.ascii_letters) + [str(i) for i in range(10)]
+_LETTER_LOWER_CANDIDATES = list(string.ascii_lowercase) + [str(i) for i in range(10)]
+_LETTER_UPPER_CANDIDATES = list(string.ascii_uppercase) + [str(i) for i in range(10)]
 
 
 #===============================================================================
@@ -86,8 +88,18 @@ def getSharesArray(arr1, arr2):
 def getRandomString(length):
     return random.choice(string.ascii_letters) + ''.join(random.choice(_LETTER_CANDIDATES) for _ in range(length - 1))
 
+
+def getRandomLower(length):
+    return random.choice(string.ascii_lowercase) + ''.join(random.choice(_LETTER_LOWER_CANDIDATES) for _ in range(length - 1))
+
+
+def getRandomUpper(length):
+    return random.choice(string.ascii_uppercase) + ''.join(random.choice(_LETTER_UPPER_CANDIDATES) for _ in range(length - 1))
+
+
 def encodeBase64(data):
     return base64.b64encode(data.encode('utf-8')).decode('ascii')
+
 
 def decodeBase64(data):
     return base64.b64decode(data.encode('ascii')).decode('utf-8')
