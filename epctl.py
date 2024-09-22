@@ -98,6 +98,7 @@ def deploy(module):
 
     options = {
         'detach': True,
+        'init': True,
         'name': f'{tenant}-{module}',
         'hostname': hostname,
         'network': tenant,
