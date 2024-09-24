@@ -14,6 +14,7 @@ import os
 import traceback
 from typing import Annotated, Any, List, Literal
 from fastapi import FastAPI, Request, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from luqum.parser import parser as parseLucene
 from stringcase import pathcase
@@ -46,6 +47,7 @@ class BaseControl:
 
         self.module = os.path.basename(self.modPath)
         self.title = self.config['default']['title']
+        self.origins = [origin.strip() for origin in self.config['origins'].split(',')] if 'origins' in self.config and self.config['origins'] else []
         self.version = int(self.config['default']['version'])
         self.uri = f'/{pathcase(self.module)}'
 
@@ -60,6 +62,13 @@ class BaseControl:
             docs_url=f'{self.uri}/docs',
             openapi_url=f'{self.uri}/openapi.json',
             separate_input_output_schemas=False
+        )
+        self.api.add_middleware(
+            CORSMiddleware,
+            allow_origins=self.origins,
+            allow_credentials=True,
+            allow_methods=['*'],
+            allow_headers=['*'],
         )
 
         LOG.INFO(f'title    = {self.title}')
