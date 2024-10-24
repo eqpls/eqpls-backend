@@ -4,6 +4,8 @@ Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
@@ -14,9 +16,10 @@ import string
 import logging
 import datetime
 import configparser
+from time import time
 
 #===============================================================================
-# Constnats
+# Constants
 #===============================================================================
 _LETTER_CANDIDATES = list(string.ascii_letters) + [str(i) for i in range(10)]
 _LETTER_LOWER_CANDIDATES = list(string.ascii_lowercase) + [str(i) for i in range(10)]
@@ -26,13 +29,17 @@ _LETTER_UPPER_CANDIDATES = list(string.ascii_uppercase) + [str(i) for i in range
 #===============================================================================
 # Implement
 #===============================================================================
+def getEnvironment(key): return __builtins__[key]
+
+
 def setEnvironment(key, value):
     __builtins__[key] = value
     return value
 
 
 def getConfig(path):
-    config = configparser.ConfigParser()
+    config = configparser.ConfigParser(interpolation=configparser.ExtendedInterpolation())
+    config.optionxform = str
     config.read(path, encoding='utf-8')
     return config
 
@@ -52,6 +59,8 @@ class Logger:
 
     def _formatter_(self, message): return f'[{datetime.datetime.now()}] {message}'
 
+    def isDebugMode(self): return self._logger.level == logging.DEBUG
+
     def KEYVAL(self, key, val): return f' - {key:<24} : {val}'
 
     def DEBUG(self, message): self._logger.debug(self._formatter_(message))
@@ -65,8 +74,7 @@ class Logger:
     def CRITICAL(self, message): self._logger.critical(self._formatter_(message))
 
 
-def mergeArray(arr1, arr2):
-    return arr1 + list(set(arr2) - set(arr1))
+def mergeArray(arr1, arr2): return arr1 + list(set(arr2) - set(arr1))
 
 
 def getNewsAndDelsArray(new, old):
@@ -85,22 +93,19 @@ def getSharesArray(arr1, arr2):
     return shares
 
 
-def getRandomString(length):
-    return random.choice(string.ascii_letters) + ''.join(random.choice(_LETTER_CANDIDATES) for _ in range(length - 1))
+def getTStamp(): return int(time())
 
 
-def getRandomLower(length):
-    return random.choice(string.ascii_lowercase) + ''.join(random.choice(_LETTER_LOWER_CANDIDATES) for _ in range(length - 1))
+def getRandomString(length): return random.choice(string.ascii_letters) + ''.join(random.choice(_LETTER_CANDIDATES) for _ in range(length - 1))
 
 
-def getRandomUpper(length):
-    return random.choice(string.ascii_uppercase) + ''.join(random.choice(_LETTER_UPPER_CANDIDATES) for _ in range(length - 1))
+def getRandomLower(length): return random.choice(string.ascii_lowercase) + ''.join(random.choice(_LETTER_LOWER_CANDIDATES) for _ in range(length - 1))
 
 
-def encodeBase64(data):
-    return base64.b64encode(data.encode('utf-8')).decode('ascii')
+def getRandomUpper(length): return random.choice(string.ascii_uppercase) + ''.join(random.choice(_LETTER_UPPER_CANDIDATES) for _ in range(length - 1))
 
 
-def decodeBase64(data):
-    return base64.b64decode(data.encode('ascii')).decode('utf-8')
+def encodeBase64(data): return base64.b64encode(data.encode('utf-8')).decode('ascii')
 
+
+def decodeBase64(data): return base64.b64decode(data.encode('ascii')).decode('utf-8')

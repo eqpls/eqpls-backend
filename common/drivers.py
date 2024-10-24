@@ -4,11 +4,13 @@ Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
 from typing import Any
-from pydantic import BaseModel
+from .models import SchemaInfo, Search
 
 
 #===============================================================================
@@ -16,50 +18,16 @@ from pydantic import BaseModel
 #===============================================================================
 class DriverBase:
 
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, control): self.control = control
 
     async def connect(self, *args, **kargs): return self
 
     async def disconnect(self): pass
 
 
-class AuthDriverBase(DriverBase):
-
-    def __init__(self, config): DriverBase.__init__(self, config)
-
-    async def getAuthInfo(self, org:str, token:str): pass
-
-    async def createOrg(self, org:dict): return org
-
-    async def updateOrg(self, org:dict): return org
-
-    async def deleteOrg(self, org:dict): return org
-
-    async def createRole(self, role:dict): return role
-
-    async def updateRole(self, role:dict): return role
-
-    async def deleteRole(self, role:dict): return role
-
-    async def createGroup(self, group:dict): return group
-
-    async def updateGroup(self, group:dict): return group
-
-    async def deleteGroup(self, group:dict): return group
-
-    async def createAccount(self, account:dict): return account
-
-    async def updateAccount(self, account:dict): return account
-
-    async def updatePassword(self, account:dict, password:str): return account
-
-    async def deleteAccount(self, account:dict): return account
-
-
 class KeyValueDriverBase(DriverBase):
 
-    def __init__(self, config): DriverBase.__init__(self, config)
+    def __init__(self, control): DriverBase.__init__(self, control)
 
     async def read(self, key:str, *args, **kargs): pass
 
@@ -70,25 +38,29 @@ class KeyValueDriverBase(DriverBase):
 
 class NetworkDriverBase(DriverBase):
 
-    def __init__(self, config): DriverBase.__init__(self, config)
+    def __init__(self, control): DriverBase.__init__(self, control)
 
-    async def listen(self, address:str, *args, **kargs): pass
+    async def listen(self, address:str, handler, *args, **kargs): pass
 
-    async def receive(self, *args, **kargs): pass
+    async def recv(self, *args, **kargs): pass
 
-    async def send(self, address:str, data:Any, *args, **kargs): pass
+    async def send(self, address:str, key:str, val:Any, *args, **kargs): pass
 
 
 class ModelDriverBase(DriverBase):
 
-    def __init__(self, config): DriverBase.__init__(self, config)
+    def __init__(self, control): DriverBase.__init__(self, control)
 
-    async def registerModel(self, schema:BaseModel, *args, **kargs): pass
+    async def registerModel(self, schemaInfo:SchemaInfo, *args, **kargs): pass
 
-    async def read(self, schema:BaseModel, id:str): pass
+    async def read(self, schemaInfo:SchemaInfo, id:str): pass
 
-    async def create(self, schema:BaseModel, *models): pass
+    async def search(self, schemaInfo:SchemaInfo, search:Search): pass
 
-    async def update(self, schema:BaseModel, *models): pass
+    async def count(self, schemaInfo:SchemaInfo, search:Search): pass
 
-    async def delete(self, schema:BaseModel, id:str): pass
+    async def create(self, schemaInfo:SchemaInfo, *models): pass
+
+    async def update(self, schemaInfo:SchemaInfo, *models): pass
+
+    async def delete(self, schemaInfo:SchemaInfo, id:str): pass

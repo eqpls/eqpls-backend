@@ -4,27 +4,25 @@ Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
 import asyncio
-
 from fastapi.concurrency import run_in_threadpool
 
 
 #===============================================================================
 # Implement
 #===============================================================================
-async def asleep(delay):
-    await asyncio.sleep(delay)
+async def asleep(delay): await asyncio.sleep(delay)
 
 
-async def runBackground(coro):
-    asyncio.create_task(coro)
+async def runBackground(coro): asyncio.create_task(coro)
 
 
-async def runSyncAsAsync(func, *args, **kargs):
-    return await run_in_threadpool(func, *args, **kargs)
+async def runSyncAsAsync(func, *args, **kargs): return await run_in_threadpool(func, *args, **kargs)
 
 
 class MultiTask:
@@ -39,5 +37,4 @@ class MultiTask:
         self._multi_tasks_.append(ref)
         return self
 
-    async def wait(self):
-        return await asyncio.gather(*(self._multi_tasks_))
+    async def wait(self): return await asyncio.gather(*(self._multi_tasks_))

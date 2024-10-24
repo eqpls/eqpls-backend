@@ -7,19 +7,9 @@ Equal Plus
 #===============================================================================
 # Import
 #===============================================================================
-from pydantic import BaseModel
-from common import SECONDS, AAA, SchemaConfig, Option, Key, BaseSchema, ProfSchema
-
+import __init__
 
 #===============================================================================
 # Implement
 #===============================================================================
-@SchemaConfig(
-version=1,
-aaa=AAA.AAG,
-cache=Option(expire=SECONDS.HOUR),
-search=Option(expire=SECONDS.DAY))
-class Bucket(BaseModel, ProfSchema, BaseSchema):
-
-    externalId: Key = ''
-    quota: int = 0
+if __name__ == '__main__': __init__.run()

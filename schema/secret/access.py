@@ -20,10 +20,6 @@ aaa=AAA.AAA,
 cache=Option(expire=SECONDS.HOUR),
 search=Option(expire=SECONDS.DAY))
 class OpenSsh(BaseModel, ProfSchema, BaseSchema):
+    rsaBits: int = 4096
     pri:Key = ''
     pub:Key = ''
-
-
-class OpenSsshRequest(BaseModel):
-    displayName: str
-    rsaBits: int = 4096

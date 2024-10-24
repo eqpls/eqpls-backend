@@ -4,12 +4,12 @@ Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
-try: import LOG  # @UnresolvedImport
-except: pass
-
+import traceback
 from fastapi import HTTPException
 
 
@@ -19,5 +19,10 @@ from fastapi import HTTPException
 class EpException(HTTPException):
 
     def __init__(self, status_code, message):
-        HTTPException.__init__(self, status_code, {'message': str(message)})
-        LOG.ERROR(f'{status_code}: {str(message)}')
+        message = str(message)
+        HTTPException.__init__(self, status_code, {'message': message})
+        LOG.ERROR(f'{status_code}: {message}')
+        if LOG.isDebugMode():
+            traceback.print_exc()
+            LOG.DEBUG(traceback.extract_stack()[:-1])
+

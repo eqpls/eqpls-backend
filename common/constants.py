@@ -4,13 +4,20 @@ Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
 from typing import Annotated
-
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, APIKeyHeader
+
+#===============================================================================
+# Headers
+#===============================================================================
+AUTH_HEADER = Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())]
+TEST_HEADER = Annotated[str | None, Depends(APIKeyHeader(name='Test', auto_error=False))]
 
 
 #===============================================================================
@@ -123,8 +130,3 @@ class AAA:
 
     @classmethod
     def checkAccount(cls, aaa): return True if aaa == 11 else False
-
-
-ORG_HEADER = Annotated[str | None, Depends(APIKeyHeader(name='Org', auto_error=False))]
-
-AUTH_HEADER = Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())]

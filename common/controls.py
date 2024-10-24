@@ -4,30 +4,29 @@ Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
-try: import LOG  # @UnresolvedImport
-except: pass
-
 import os
-import traceback
+import json
+import aiohttp
 from typing import Annotated, Any, List, Literal
+from pydantic import BaseModel
+from stringcase import pathcase
 from fastapi import FastAPI, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.security import HTTPAuthorizationCredentials
+from aiohttp.client_exceptions import ClientResponseError
 from luqum.parser import parser as parseLucene
-from stringcase import pathcase
-
-from .constants import CRUD, LAYER, AAA, ORG_HEADER, AUTH_HEADER
+from .auth import AuthInfo
+from .constants import CRUD, LAYER, AAA, AUTH_HEADER
 from .exceptions import EpException
-from .schedules import asleep, runBackground
 from .interfaces import AsyncRest
-from .utils import getConfig, Logger
-from .models import Search, ID, BaseSchema, ServiceHealth, ModelStatus, ModelCount
-from .auth import AuthInfo, Org, Account, Role, Group
-from .data.user import Bucket as UserBucket
-from .data.group import Bucket as GroupBucket
+from .models import ID, Search, BaseSchema, ServiceHealth, ModelStatus, ModelCount
+from .schedules import runBackground
+from .utils import setEnvironment, getConfig, Logger, getTStamp
 
 
 #===============================================================================
@@ -35,27 +34,38 @@ from .data.group import Bucket as GroupBucket
 #===============================================================================
 class BaseControl:
 
-    def __init__(self, path:str, sessionChecker:str=None, background:bool=False):
+    def __init__(self, path:str):
         self.path = os.path.abspath(path)
         self.svcPath = os.path.dirname(self.path)
         self.modPath = os.path.dirname(self.svcPath)
         self.prjPath = os.path.dirname(self.modPath)
-        self.background = background
+        self.module = os.path.basename(self.modPath)
 
         self.config = getConfig(f'{self.prjPath}/project.ini')
         Logger.register(self.config)
 
-        self.module = os.path.basename(self.modPath)
-        self.title = self.config['default']['title']
-        self.origins = [origin.strip() for origin in self.config['origins'].split(',')] if 'origins' in self.config and self.config['origins'] else []
-        self.version = int(self.config['default']['version'])
+        self.defConf = self.config['default']
+        self.modCOnf = self.config[self.module]
+        self.title = self.defConf['title']
+        self.tenant = self.defConf['tenant']
+        self.domain = self.defConf['domain']
+        self.endpoint = self.defConf['endpoint']
+        self.origins = [origin.strip() for origin in self.defConf['origins'].split(',')] if 'origins' in self.defConf and self.defConf['origins'] else []
+        self.version = int(self.defConf['version'])
         self.uri = f'/{pathcase(self.module)}'
+        self.uriver = f'{self.uri}/v{self.version}'
 
-        if sessionChecker:
-            checkerHostname = self.config[sessionChecker]['hostname']
-            checkerHostport = self.config[sessionChecker]['hostport']
-            self.sessionCheckerUrl = f'http://{checkerHostname}:{checkerHostport}'
-            self.checkAuthInfo = self.__check_auth_info__
+        self.systemAccessKey = self.defConf['system_access_key']
+        self.systemSecretKey = self.defConf['system_secret_key']
+        self.adminUsername = self.defConf['admin_username']
+        self.adminPassword = self.defConf['admin_password']
+        self.adminGroupName = self.defConf['admin_group']
+        self.adminRoleName = self.defConf['admin_role']
+        self.userGroupName = self.defConf['user_group']
+        self.userRoleName = self.defConf['user_role']
+
+        self.hostname = self.modCOnf['hostname']
+        self.hostport = self.modCOnf['hostport']
 
         self.api = FastAPI(
             title=self.module,
@@ -63,37 +73,43 @@ class BaseControl:
             openapi_url=f'{self.uri}/openapi.json',
             separate_input_output_schemas=False
         )
-        self.api.add_middleware(
-            CORSMiddleware,
-            allow_origins=self.origins,
-            allow_credentials=True,
-            allow_methods=['*'],
-            allow_headers=['*'],
-        )
+        if self.origins:
+            self.api.add_middleware(
+                CORSMiddleware,
+                allow_origins=self.origins,
+                allow_credentials=True,
+                allow_methods=['*'],
+                allow_headers=['*'],
+            )
 
-        LOG.INFO(f'title    = {self.title}')
+        LOG.INFO(f'hostname = {self.hostname}')
+        LOG.INFO(f'hostport = {self.hostport}')
         LOG.INFO(f'module   = {self.module}')
+        LOG.INFO(f'title    = {self.title}')
+        LOG.INFO(f'tenant   = {self.tenant}')
+        LOG.INFO(f'domain   = {self.domain}')
+        LOG.INFO(f'endpoint = {self.endpoint}')
         LOG.INFO(f'version  = {self.version}')
         LOG.INFO(f'uri      = {self.uri}')
         LOG.INFO(f'swagger  = {self.uri}/docs')
-        LOG.INFO(f'prj path = {self.svcPath}')
-        LOG.INFO(f'mod path = {self.svcPath}')
+        LOG.INFO(f'restful  = {self.uriver}')
+        LOG.INFO(f'prj path = {self.prjPath}')
+        LOG.INFO(f'mod path = {self.modPath}')
         LOG.INFO(f'svc path = {self.svcPath}')
 
         self.api.router.add_event_handler('startup', self.__startup__)
         self.api.router.add_event_handler('shutdown', self.__shutdown__)
 
     async def __startup__(self):
+        LOG.INFO(f'{self.module} start controller')
         await self.startup()
-        LOG.INFO('startup finished')
-        if self.background: await runBackground(self.__background__())
-        LOG.INFO('start background')
+        LOG.INFO(f'{self.module} controller is started')
         self.api.add_api_route(
-            tags=['Module'],
+            tags=['Internal'],
             name='Health',
             methods=['GET'],
-            path='/module/health',
-            endpoint=self.__health__,
+            path='/internal/health',
+            endpoint=self.health,
             response_model=ServiceHealth
         )
         LOG.INFO('register health interface')
@@ -103,257 +119,413 @@ class BaseControl:
         await self.shutdown()
         LOG.INFO(f'{self.module} controller is finished')
 
-    async def __background__(self):
-        LOG.INFO('run background')
-        while self._background: await self.background()
-        LOG.INFO('background finished')
-
-    async def __health__(self) -> ServiceHealth:
-        return await self.health()
-
-    async def __check_auth_info__(self, org:str, token:str):
-        async with AsyncRest(self.sessionCheckerUrl) as rest:
-            authInfo = await rest.get(f'/internal/authinfo', headers={
-                'Authorization': f'Bearer {token}',
-                'Org': org
-            })
-        return AuthInfo(**authInfo)
-
     async def startup(self): pass
 
     async def shutdown(self): pass
 
-    async def background(self):
-        await asleep(1)
-
-    async def health(self) -> ServiceHealth:
-        return ServiceHealth(title=self.module, status='OK', healthy=True)
+    async def health(self) -> ServiceHealth: return ServiceHealth(title=self.module, status='OK', healthy=True)
 
 
 #===============================================================================
-# Mesh Control
+# Session Control
 #===============================================================================
-class MeshControl(BaseControl):
+class SessionControl(BaseControl):
 
-    def __init__(self, path:str, sessionChecker:str=None, background:bool=False):
-        BaseControl.__init__(
-            self,
-            path=path,
-            sessionChecker=sessionChecker,
-            background=background
-        )
+    def __init__(self, path:str, accountCacheDriver:Any):
+        BaseControl.__init__(self, path)
+        accConf = self.config[self.defConf['account_module']]
+        accHostname = accConf['hostname']
+        accHostport = accConf['hostport']
+        self.accountBaseUrl = f'http://{accHostname}:{accHostport}/{accHostname}/v{self.version}'
+        self.accountCache = accountCacheDriver(self)
 
-    async def registerModel(self, schema:BaseSchema, uerp:str):
-        if uerp not in self.config: raise Exception(f'{uerp} is not in configuration')
-        config = self.config[uerp]
-        hostname = config['hostname']
-        hostport = config['hostport']
+    async def __startup__(self):
+        await self.accountCache.connect()
+        await BaseControl.__startup__(self)
+
+    async def __shutdown__(self):
+        await BaseControl.__shutdown__(self)
+        await self.accountCache.disconnect()
+
+    async def getSystemToken(self):
+        systemToken = self.accountCache.read('systemToken')
+        if systemToken: return systemToken
+        raise EpException(500, 'Internal Server Error')
+
+    async def checkBearerToken(self, bearerToken:str) -> AuthInfo:
+        authInfo = await self.accountCache.read(bearerToken)
+        if not authInfo:
+            async with AsyncRest(self.accountBaseUrl) as req: authInfo = await req.get('/authinfo', headers={'Authorization': f'Bearer {bearerToken}'})
+        return AuthInfo(**authInfo)
+
+    async def checkAuthorization(self, token:HTTPAuthorizationCredentials) -> AuthInfo:
+        return await self.checkBearerToken(token.credentials)
+
+    async def checkCreatable(self, token:HTTPAuthorizationCredentials, sref:str) -> AuthInfo:
+        return (await self.checkAuthorization(token)).checkCreate(sref)
+
+    async def checkReadable(self, token:HTTPAuthorizationCredentials, sref:str) -> AuthInfo:
+        return (await self.checkAuthorization(token)).checkRead(sref)
+
+    async def checkUpdatable(self, token:HTTPAuthorizationCredentials, sref:str) -> AuthInfo:
+        return (await self.checkAuthorization(token)).checkUpdate(sref)
+
+    async def checkDeletable(self, token:HTTPAuthorizationCredentials, sref:str) -> AuthInfo:
+        return (await self.checkAuthorization(token)).checkDelete(sref)
+
+
+#===============================================================================
+# Model Control
+#===============================================================================
+class ModelControl(SessionControl):
+
+    def __init__(self, path:str, cacheAccountDriver:Any):
+        SessionControl.__init__(self, path, cacheAccountDriver)
+        self.modelSession = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True)
+        self.schemaInfoList = []
+        self.schemaInfoMap = {}
+
+    async def __startup__(self):
+        await SessionControl.__startup__(self)
+
+    async def __shutdown__(self):
+        await SessionControl.__shutdown__(self)
+        await self.modelSession.close()
+
+    async def registerModel(self, schema:BaseSchema, module:str, createHandler=None, updateHandler=None, deleteHandler=None):
+        if module not in self.config: raise Exception(f'{module} is not in configuration')
+        modConf = self.config[module]
+        modHostname = modConf['hostname']
+        modHostport = modConf['hostport']
         schema.setSchemaInfo(
-            f'http://{hostname}:{hostport}',
-            uerp,
-            self.version
+            service=module,
+            version=self.version,
+            control=self,
+            provider=f'http://{modHostname}:{modHostport}',
+            createHandler=createHandler,
+            updateHandler=updateHandler,
+            deleteHandler=deleteHandler
         )
+        schemaInfo = schema.getSchemaInfo()
+        currPath = schemaInfo.path.replace(f'/{module}/v{self.version}', self.uriver)
+
+        self.schemaInfoList.append(schemaInfo)
+        self.schemaInfoMap[currPath] = schemaInfo
+        setEnvironment(schemaInfo.sref, schema)
+
+        if createHandler:
+            if CRUD.checkCreate(schemaInfo.crud):
+                if AAA.checkAuthorization(schemaInfo.aaa):
+                    if AAA.checkGroup(schemaInfo.aaa):
+                        self.createModelByAuthnGroup.__annotations__['model'] = schema
+                        self.api.add_api_route(methods=['POST'], path=currPath, endpoint=self.createModelByAuthnGroup, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
+                    else:
+                        self.createModelByAuth.__annotations__['model'] = schema
+                        self.api.add_api_route(methods=['POST'], path=currPath, endpoint=self.createModelByAuth, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
+                else:
+                    self.createModelByAnony.__annotations__['model'] = schema
+                    self.api.add_api_route(methods=['POST'], path=currPath, endpoint=self.createModelByAnony, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
+            else: raise EpException(500, 'Internal Server Error')
+
+        if updateHandler:
+            if CRUD.checkUpdate(schemaInfo.crud):
+                if AAA.checkAuthorization(schemaInfo.aaa):
+                    self.updateModelByAuth.__annotations__['model'] = schema
+                    self.api.add_api_route(methods=['PUT'], path=currPath + '/{id}', endpoint=self.updateModelByAuth, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
+                else:
+                    self.updateModelByAnony.__annotations__['model'] = schema
+                    self.api.add_api_route(methods=['PUT'], path=currPath + '/{id}', endpoint=self.updateModelByAnony, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
+            else: raise EpException(500, 'Internal Server Error')
+
+        if deleteHandler:
+            if CRUD.checkDelete(schemaInfo.crud):
+                if AAA.checkAuthorization(schemaInfo.aaa):
+                    self.api.add_api_route(methods=['DELETE'], path=currPath + '/{id}', endpoint=self.deleteModelByAuth, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
+                else:
+                    self.api.add_api_route(methods=['DELETE'], path=currPath + '/{id}', endpoint=self.deleteModelByAnony, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
+            else: raise EpException(500, 'Internal Server Error')
+
         return self
+
+    async def createModelByAuth(
+        self,
+        request:Request,
+        token:AUTH_HEADER,
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        try:
+            schemaInfo = self.schemaInfoMap[request.scope['path']]
+            await schemaInfo.createHandler(model, token)
+            async with self.modelSession.post(
+                f"{schemaInfo.provider}{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
+                headers={'Authorization': f'Bearer {token.credentials}'},
+                json=model.model_dump()
+            ) as res: return json.loads(await res.text())
+        except ClientResponseError as e: raise EpException(e.status, e.message)
+        except: raise EpException(500, 'Internal Server Error')
+
+    async def createModelByAuthnGroup(
+        self,
+        request:Request,
+        token:AUTH_HEADER,
+        model:BaseModel,
+        group:Annotated[str, Query(alias='$group', description='group code for access control')],
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        try:
+            schemaInfo = self.schemaInfoMap[request.scope['path']]
+            await schemaInfo.createHandler(model, token)
+            query = f'?{request.scope["query_string"].decode("latin-1")}' if request.scope['query_string'] else ''
+            async with self.modelSession.post(
+                f'{schemaInfo.provider}{schemaInfo.path}{query}',
+                headers={'Authorization': f'Bearer {token.credentials}'},
+                json=model.model_dump()
+            ) as res: return json.loads(await res.text())
+        except ClientResponseError as e:
+            raise EpException(e.status, e.message)
+        except: raise EpException(500, 'Internal Server Error')
+
+    async def createModelByAnony(
+        self,
+        request:Request,
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        try:
+            schemaInfo = self.schemaInfoMap[request.scope['path']]
+            await schemaInfo.createHandler(model)
+            async with self.modelSession.post(
+                f"{schemaInfo.provider}{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
+                json=model.model_dump()
+            ) as res: return json.loads(await res.text())
+        except ClientResponseError as e: raise EpException(e.status, e.message)
+        except: raise EpException(500, 'Internal Server Error')
+
+    async def updateModelByAuth(
+        self,
+        request:Request,
+        token:AUTH_HEADER,
+        id:ID,
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        id = str(id)
+        try:
+            schemaInfo = self.schemaInfoMap[request.scope['path'].replace(f'/{id}', '')]
+            await schemaInfo.updateHandler(model, token)
+            async with self.modelSession.put(
+                f"{schemaInfo.provider}{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
+                headers={'Authorization': f'Bearer {token.credentials}'},
+                json=model.model_dump()
+            ) as res: return json.loads(await res.text())
+        except ClientResponseError as e: raise EpException(e.status, e.message)
+        except: raise EpException(500, 'Internal Server Error')
+
+    async def updateModelByAnony(
+        self,
+        request:Request,
+        id:ID,
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        id = str(id)
+        try:
+            schemaInfo = self.schemaInfoMap[request.scope['path'].replace(f'/{id}', '')]
+            await schemaInfo.updateHandler(model)
+            async with self.modelSession.put(
+                f"{schemaInfo.provider}{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
+                json=model.model_dump()
+            ) as res: return json.loads(await res.text())
+        except ClientResponseError as e: raise EpException(e.status, e.message)
+        except: raise EpException(500, 'Internal Server Error')
+
+    async def deleteModelByAuth(
+        self,
+        request:Request,
+        token:AUTH_HEADER,
+        id:ID,
+        force:Annotated[Literal['true', 'false', ''], Query(alias='$force', description='delete permanently')]=None,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        id = str(id)
+        try:
+            schemaInfo = self.schemaInfoMap[request.scope['path'].replace(f'/{id}', '')]
+            await schemaInfo.deleteHandler(await schemaInfo.ref.readModelByID(id, token), token)
+            query = f'?{request.scope["query_string"].decode("latin-1")}' if request.scope['query_string'] else ''
+            async with self.modelSession.delete(
+                f'{schemaInfo.provider}{schemaInfo.path}{query}',
+                headers={'Authorization': f'Bearer {token.credentials}'}
+            ) as res: return json.loads(await res.text())
+        except ClientResponseError as e: raise EpException(e.status, e.message)
+        except: raise EpException(500, 'Internal Server Error')
+
+    async def deleteModelByAnony(
+        self,
+        request:Request,
+        id:ID,
+        force:Annotated[Literal['true', 'false', ''], Query(alias='$force', description='delete permanently')]=None,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        id = str(id)
+        try:
+            schemaInfo = self.schemaInfoMap[request.scope['path'].replace(f'/{id}', '')]
+            await schemaInfo.deleteHandler(await schemaInfo.ref.readModelByID(id))
+            query = f'?{request.scope["query_string"].decode("latin-1")}' if request.scope['query_string'] else ''
+            async with self.modelSession.put(f'{schemaInfo.provider}{schemaInfo.path}{query}') as res: return json.loads(await res.text())
+        except ClientResponseError as e: raise EpException(e.status, e.message)
+        except: raise EpException(500, 'Internal Server Error')
 
 
 #===============================================================================
 # Uerp Control
 #===============================================================================
-class UerpControl(BaseControl):
+class UerpControl(SessionControl):
 
     def __init__(
         self,
         path:str,
-        authDriver:Any,
+        sessionCacheDriver:Any,
+        queueDriver:Any,
         cacheDriver:Any,
         searchDriver:Any,
         databaseDriver:Any,
-        background:bool=False
     ):
-        BaseControl.__init__(
-            self,
-            path=path,
-            background=background
-        )
-
-        self._uerpAuth = authDriver(self.config)
-        self._uerpCache = cacheDriver(self.config)
-        self._uerpSearch = searchDriver(self.config)
-        self._uerpDatabase = databaseDriver(self.config)
-
-        self._uerpSchemaList = []
-        self._uerpPathToSchemaMap = {}
+        SessionControl.__init__(self, path, sessionCacheDriver)
+        self.queue = queueDriver(self)
+        self.cache = cacheDriver(self)
+        self.search = searchDriver(self)
+        self.database = databaseDriver(self)
+        self.schemaInfoList = []
+        self.schemaInfoMap = {}
 
     async def __startup__(self):
-        await self._uerpDatabase.connect()
-        await self._uerpSearch.connect()
-        await self._uerpCache.connect()
-
-        await BaseControl.__startup__(self)
-
-        await self.registerModel(
-            schema=UserBucket,
-            createHandler=self._uerpAuth.createBucket,
-            updateHandler=self._uerpAuth.updateBucket,
-            deleteHandler=self._uerpAuth.deleteBucket
+        await self.database.connect()
+        await self.search.connect()
+        await self.cache.connect()
+        await self.queue.connect()
+        self.api.add_api_route(
+            methods=['GET'],
+            path=f'{self.uriver}/schema',
+            endpoint=self.getSchemaInfo, response_model=dict, tags=['Schema'], name='Get Schema Info'
         )
-        LOG.INFO('register user bucket interface')
-        await self.registerModel(
-            schema=GroupBucket,
-            createHandler=self._uerpAuth.createBucket,
-            updateHandler=self._uerpAuth.updateBucket,
-            deleteHandler=self._uerpAuth.deleteBucket
-        )
-        LOG.INFO('register group bucket interface')
-        await self.registerModel(
-            schema=Account,
-            createHandler=self._uerpAuth.createAccount,
-            updateHandler=self._uerpAuth.updateAccount,
-            deleteHandler=self._uerpAuth.deleteAccount
-        )
-        LOG.INFO('register account interface')
-        await self.registerModel(
-            schema=Role,
-            createHandler=self._uerpAuth.createRole,
-            updateHandler=self._uerpAuth.updateRole,
-            deleteHandler=self._uerpAuth.deleteRole
-        )
-        LOG.INFO('register role interface')
-        await self.registerModel(
-            schema=Group,
-            createHandler=self._uerpAuth.createGroup,
-            updateHandler=self._uerpAuth.updateGroup,
-            deleteHandler=self._uerpAuth.deleteGroup
-        )
-        LOG.INFO('register group interface')
-        await self.registerModel(
-            schema=Org,
-            createHandler=self._uerpAuth.createOrg,
-            updateHandler=self._uerpAuth.updateOrg,
-            deleteHandler=self._uerpAuth.deleteOrg
-        )
-        LOG.INFO('register org interface')
-
-        await self._uerpAuth.connect()
-        LOG.INFO('connect auth driver')
-
-        self.api.add_api_route(methods=['GET'], path=f'{self.uri}/v{self.version}/schema', endpoint=self.__describe_schema__, response_model=dict, tags=['Schema'], name='Get Schema Map')
-        LOG.INFO('register schema interface')
-
-        for schema in self._uerpPathToSchemaMap.values():
-            schemaInfo = schema.getSchemaInfo()
-            internalPath = schemaInfo.path.replace(f'/{schemaInfo.service}/v{schemaInfo.major}/', f'/internal/v{schemaInfo.major}/')
-            self.api.add_api_route(methods=['GET'], path=internalPath, endpoint=self.__search_data_with_free__, response_model=List[schema], tags=['Supervisor Interface'], name=f'Search {schemaInfo.name}')
-            self.api.add_api_route(methods=['GET'], path=internalPath + '/count', endpoint=self.__count_data_with_free__, response_model=ModelCount, tags=['Supervisor Interface'], name=f'Count {schemaInfo.name}')
-            self.api.add_api_route(methods=['GET'], path=internalPath + '/{id}', endpoint=self.__read_data_with_free__, response_model=schema, tags=['Supervisor Interface'], name=f'Read {schemaInfo.name}')
-            self.__create_data_with_free__.__annotations__['model'] = schema
-            self.api.add_api_route(methods=['POST'], path=internalPath, endpoint=self.__create_data_with_free__, response_model=schema, tags=['Supervisor Interface'], name=f'Create {schemaInfo.name}')
-            self.__create_data_with_free__.__annotations__['model'] = BaseModel
-            self.__update_data_with_free__.__annotations__['model'] = schema
-            self.api.add_api_route(methods=['PUT'], path=internalPath + '/{id}', endpoint=self.__update_data_with_free__, response_model=schema, tags=['Supervisor Interface'], name=f'Update {schemaInfo.name}')
-            self.__update_data_with_free__.__annotations__['model'] = BaseModel
-            self.api.add_api_route(methods=['DELETE'], path=internalPath + '/{id}', endpoint=self.__delete_data_with_free__, response_model=ModelStatus, tags=['Supervisor Interface'], name=f'Delete {schemaInfo.name}')
-        LOG.INFO('register supervisor model interfaces')
-
-        self.api.add_api_route(methods=['GET'], path='/internal/authinfo', endpoint=self.__confirm_auth_info__, response_model=AuthInfo, tags=['Supervisor Interface'], name='Check Auth Info')
-        LOG.INFO('register supervisor authinfo interface')
-
-        self.api.add_api_route(methods=['GET'], path='/internal/client/secret', endpoint=self.__get_client_secret__, response_model=str, tags=['Supervisor Interface'], name='Get Client Secret')
-        LOG.INFO('register supervisor client secret interface')
-
-        self.api.add_api_route(methods=['GET'], path='/internal/default/user/role', endpoint=self.__get_default_user_role__, response_model=str, tags=['Supervisor Interface'], name='Get Default User Role')
-        LOG.INFO('register supervisor default user role interface')
-
-        self.api.add_api_route(methods=['GET'], path='/internal/default/user/group', endpoint=self.__get_default_user_group__, response_model=str, tags=['Supervisor Interface'], name='Get Default User Group')
-        LOG.INFO('register supervisor default user group interface')
+        await SessionControl.__startup__(self)
 
     async def __shutdown__(self):
-        await BaseControl.__shutdown__(self)
-        if self._uerpDatabase: await self._uerpDatabase.disconnect()
-        if self._uerpSearch: await self._uerpSearch.disconnect()
-        if self._uerpCache: await self._uerpCache.disconnect()
-        if self._uerpAuth: await self._uerpAuth.disconnect()
+        await SessionControl.__shutdown__(self)
+        await self.database.disconnect()
+        await self.search.disconnect()
+        await self.cache.disconnect()
+        await self.queue.disconnect()
 
-    async def registerModel(
-        self,
-        schema:BaseSchema,
-        createHandler=None,
-        updateHandler=None,
-        deleteHandler=None
-    ):
+    async def publishToRouter(self, publish, category, target, status, data):
+        if True if publish == '' or publish == 'true' else False: await runBackground(self.__publishToRouter__(category, target, data['id'], data['sref'], data['uref'], status))
+
+    async def __publishToRouter__(self, category, target, id, sref, uref, status):
+        try: await self.queue.publish(category, target, 'mdstat', {'id': id, 'sref': sref, 'uref': uref, 'status': status})
+        except: pass
+
+    async def registerModel(self, schema:BaseSchema, createHandler=None, updateHandler=None, deleteHandler=None):
         schema.setSchemaInfo(
-            self,
-            self.module,
-            self.version,
+            service=self.module,
+            version=self.version,
+            control=self,
             createHandler=createHandler,
             updateHandler=updateHandler,
             deleteHandler=deleteHandler
         )
         schemaInfo = schema.getSchemaInfo()
 
-        if LAYER.checkDatabase(schemaInfo.layer): await self._uerpDatabase.registerModel(schema)
-        if LAYER.checkSearch(schemaInfo.layer): await self._uerpSearch.registerModel(schema)
-        if LAYER.checkCache(schemaInfo.layer): await self._uerpCache.registerModel(schema)
+        if LAYER.checkDatabase(schemaInfo.layer): await self.database.registerModel(schemaInfo)
+        if LAYER.checkSearch(schemaInfo.layer): await self.search.registerModel(schemaInfo)
+        if LAYER.checkCache(schemaInfo.layer): await self.cache.registerModel(schemaInfo)
 
-        self._uerpSchemaList.append(schema)
-        self._uerpPathToSchemaMap[schemaInfo.path] = schema
+        self.schemaInfoList.append(schemaInfo)
+        self.schemaInfoMap[schemaInfo.path] = schemaInfo
+        setEnvironment(schemaInfo.sref, schema)
 
-        if AAA.checkAuthorization(schemaInfo.aaa):
-            if CRUD.checkRead(schemaInfo.crud):
-                self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.__search_data_with_auth__, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
-                self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.__count_data_with_auth__, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
-                self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.__read_data_with_auth__, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
-            if CRUD.checkCreate(schemaInfo.crud):
-                if AAA.checkGroup(schemaInfo.aaa):
-                    self.__create_data_with_auth_by_group__.__annotations__['model'] = schema
-                    self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.__create_data_with_auth_by_group__, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
-                    self.__create_data_with_auth_by_group__.__annotations__['model'] = BaseModel
+        if CRUD.checkRead(schemaInfo.crud):
+            if AAA.checkAuthorization(schemaInfo.aaa):
+                if AAA.checkAuthentication(schemaInfo.aaa):
+                    if AAA.checkAccount(schemaInfo.aaa):
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuthnUser, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuthnUser, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.readModelByAuthnUser, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
+                    elif AAA.checkGroup(schemaInfo.aaa):
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuthnGroup, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuthnGroup, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.readModelByAuthnGroup, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
+                    else:
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuthn, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuthn, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.readModelByAuthn, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
                 else:
-                    self.__create_data_with_auth__.__annotations__['model'] = schema
-                    self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.__create_data_with_auth__, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
-                    self.__create_data_with_auth__.__annotations__['model'] = BaseModel
-            if CRUD.checkUpdate(schemaInfo.crud):
-                if AAA.checkGroup(schemaInfo.aaa):
-                    self.__update_data_with_auth_by_group__.__annotations__['model'] = schema
-                    self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.__update_data_with_auth_by_group__, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
-                    self.__update_data_with_auth_by_group__.__annotations__['model'] = BaseModel
+                    self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuth, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
+                    self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuth, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
+                    self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.readModelByAuth, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
+            else:
+                self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAnony, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
+                self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAnony, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
+                self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.readModelByAnony, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
+
+        if CRUD.checkCreate(schemaInfo.crud):
+            if AAA.checkAuthorization(schemaInfo.aaa):
+                if AAA.checkAuthentication(schemaInfo.aaa):
+                    if AAA.checkAccount(schemaInfo.aaa):
+                        self.createModelByAuthnUser.__annotations__['model'] = schema
+                        self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.createModelByAuthnUser, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
+                    elif AAA.checkGroup(schemaInfo.aaa):
+                        self.createModelByAuthnGroup.__annotations__['model'] = schema
+                        self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.createModelByAuthnGroup, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
+                    else:
+                        self.createModelByAuthn.__annotations__['model'] = schema
+                        self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.createModelByAuthn, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
                 else:
-                    self.__update_data_with_auth__.__annotations__['model'] = schema
-                    self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.__update_data_with_auth__, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
-                    self.__update_data_with_auth__.__annotations__['model'] = BaseModel
-            if CRUD.checkDelete(schemaInfo.crud):
-                if AAA.checkGroup(schemaInfo.aaa):
-                    self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.__delete_data_with_auth_by_group__, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
+                    self.createModelByAuth.__annotations__['model'] = schema
+                    self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.createModelByAuth, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
+            else:
+                self.createModelByAnony.__annotations__['model'] = schema
+                self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.createModelByAnony, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
+
+        if CRUD.checkUpdate(schemaInfo.crud):
+            if AAA.checkAuthorization(schemaInfo.aaa):
+                if AAA.checkAuthentication(schemaInfo.aaa):
+                    if AAA.checkAccount(schemaInfo.aaa):
+                        self.updateModelByAuthnUser.__annotations__['model'] = schema
+                        self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.updateModelByAuthnUser, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
+                    elif AAA.checkGroup(schemaInfo.aaa):
+                        self.updateModelByAuthnGroup.__annotations__['model'] = schema
+                        self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.updateModelByAuthnGroup, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
+                    else:
+                        self.updateModelByAuthn.__annotations__['model'] = schema
+                        self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.updateModelByAuthn, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
                 else:
-                    self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.__delete_data_with_auth__, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
-        else:
-            if CRUD.checkRead(schemaInfo.crud):
-                self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.__search_data_with_free__, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
-                self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.__count_data_with_free__, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
-                self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.__read_data_with_free__, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
-            if CRUD.checkCreate(schemaInfo.crud):
-                self.__create_data_with_free__.__annotations__['model'] = schema
-                self.api.add_api_route(methods=['POST'], path=schemaInfo.path, endpoint=self.__create_data_with_free__, response_model=schema, tags=schemaInfo.tags, name=f'Create {schemaInfo.name}')
-                self.__create_data_with_free__.__annotations__['model'] = BaseModel
-            if CRUD.checkUpdate(schemaInfo.crud):
-                self.__update_data_with_free__.__annotations__['model'] = schema
-                self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.__update_data_with_free__, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
-                self.__update_data_with_free__.__annotations__['model'] = BaseModel
-            if CRUD.checkDelete(schemaInfo.crud):
-                self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.__delete_data_with_free__, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
+                    self.updateModelByAuth.__annotations__['model'] = schema
+                    self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.updateModelByAuth, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
+            else:
+                self.updateModelByAnony.__annotations__['model'] = schema
+                self.api.add_api_route(methods=['PUT'], path=schemaInfo.path + '/{id}', endpoint=self.updateModelByAnony, response_model=schema, tags=schemaInfo.tags, name=f'Update {schemaInfo.name}')
+
+        if CRUD.checkDelete(schemaInfo.crud):
+            if AAA.checkAuthorization(schemaInfo.aaa):
+                if AAA.checkAuthentication(schemaInfo.aaa):
+                    if AAA.checkAccount(schemaInfo.aaa):
+                        self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.deleteModelByAuthnUser, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
+                    elif AAA.checkGroup(schemaInfo.aaa):
+                        self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.deleteModelByAuthnGroup, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
+                    else:
+                        self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.deleteModelByAuthn, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
+                else:
+                    self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.deleteModelByAuth, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
+            else:
+                self.api.add_api_route(methods=['DELETE'], path=schemaInfo.path + '/{id}', endpoint=self.deleteModelByAnony, response_model=ModelStatus, tags=schemaInfo.tags, name=f'Delete {schemaInfo.name}')
 
         return self
 
-    async def __describe_schema__(
-        self,
-        org: ORG_HEADER,
-        token: AUTH_HEADER
-    ) -> dict:
-        await self._uerpAuth.getAuthInfo(org, token.credentials)
-
+    async def getSchemaInfo(self, token: AUTH_HEADER) -> dict:
+        await self.checkAuthorization(token)
         desc = {}
-        for schema in self._uerpSchemaList:
-            schemaInfo = schema.getSchemaInfo()
+        for schemaInfo in self.schemaInfoList:
             desc[schemaInfo.sref] = {
                 'name': schemaInfo.name,
                 'sref': schemaInfo.sref,
@@ -373,107 +545,93 @@ class UerpControl(BaseControl):
             }
         return desc
 
-    async def __confirm_auth_info__(
-        self,
-        org: ORG_HEADER,
-        token: AUTH_HEADER
-    ) -> AuthInfo:
-        return await self._uerpAuth.getAuthInfo(org, token.credentials)
-
-    async def __get_client_secret__(
-        self,
-        org:str,
-        client:str
-    ) -> str:
-        return await self._uerpAuth.getClientSecret(org, client)
-
-    async def __get_default_user_role__(
-        self,
-        org:str
-    ) -> str:
-        return await self._uerpAuth.getDefaultUserRole(org)
-
-    async def __get_default_user_group__(
-        self,
-        org:str
-    ) -> str:
-        return await self._uerpAuth.getDefaultUserGroup(org)
-
-    async def __read_data_with_auth__(
-        self,
-        request:Request,
-        org: ORG_HEADER,
-        token: AUTH_HEADER,
-        id:ID
-    ):
-        authInfo = await self._uerpAuth.getAuthInfo(org, token.credentials)
-
+    async def readModelByAuthnUser(self, request:Request, token: AUTH_HEADER, id:ID):
         id = str(id)
-        schema = self._uerpPathToSchemaMap[request.scope['path'].replace(f'/{id}', '')]
-        schemaInfo = schema.getSchemaInfo()
-
-        if not authInfo.checkAdmin() and AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkReadACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-        model = await self.readModel(schema, id)
-        if model.org and not authInfo.checkOrg(model.org): raise EpException(404, 'Not Found')
-        if AAA.checkAccount(schemaInfo.aaa):
-            if not authInfo.checkUsername(model.owner): raise EpException(403, 'Forbidden')
-        elif AAA.checkGroup(schemaInfo.aaa):
-            if not authInfo.checkGroup(model.owner): raise EpException(403, 'Forbidden')
+        uref = request.scope['path']
+        path = uref.replace(f'/{id}', '')
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        authInfo = await self.checkReadable(token, sref)
+        model = await self.readModel(schemaInfo, id)
+        authInfo.checkUsername(model['owner'])
         return model
 
-    async def __read_data_with_free__(
-        self,
-        request:Request,
-        id:ID
-    ): return await self.readModel(self._uerpPathToSchemaMap[request.scope['path'].replace(f'/{id}', '')], str(id))
+    async def readModelByAuthnGroup(self, request:Request, token: AUTH_HEADER, id:ID):
+        id = str(id)
+        uref = request.scope['path']
+        path = uref.replace(f'/{id}', '')
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        authInfo = await self.checkReadable(token, sref)
+        model = await self.readModel(schemaInfo, id)
+        authInfo.checkGroup(model['owner'])
+        return model
 
-    async def readModel(
-        self,
-        schema,
-        id
-    ):
-        schemaInfo = schema.getSchemaInfo()
+    async def readModelByAuthn(self, request:Request, token: AUTH_HEADER, id:ID):
+        id = str(id)
+        uref = request.scope['path']
+        path = uref.replace(f'/{id}', '')
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        await self.checkReadable(token, sref)
+        return await self.readModel(schemaInfo, id)
 
+    async def readModelByAuth(self, request:Request, token: AUTH_HEADER, id:ID):
+        id = str(id)
+        uref = request.scope['path']
+        path = uref.replace(f'/{id}', '')
+        schemaInfo = self.schemaInfoMap[path]
+        await self.checkAuthorization(token)
+        return await self.readModel(schemaInfo, id)
+
+    async def readModelByAnony(self, request:Request, id:ID):
+        id = str(id)
+        uref = request.scope['path']
+        path = uref.replace(f'/{id}', '')
+        schemaInfo = self.schemaInfoMap[path]
+        return await self.readModel(schemaInfo, id)
+
+    async def readModel(self, schemaInfo, id):
         if LAYER.checkCache(schemaInfo.layer):
             try:
-                model = await self._uerpCache.read(schema, id)
-                if model: return schema(**model)
+                model = await self.cache.read(schemaInfo, id)
+                if model: return model
             except: pass
         if LAYER.checkSearch(schemaInfo.layer):
             try:
-                model = await self._uerpSearch.read(schema, id)
+                model = await self.search.read(schemaInfo, id)
                 if model:
-                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.create(schema, model))
-                    return schema(**model)
+                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.create(schemaInfo, model))
+                    return model
             except: pass
         if LAYER.checkDatabase(schemaInfo.layer):
             try:
-                model = await self._uerpDatabase.read(schema, id)
+                model = await self.database.read(schemaInfo, id)
                 if model:
-                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.create(schema, model))
-                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self._uerpSearch.create(schema, model))
-                    return schema(**model)
+                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.create(schemaInfo, model))
+                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self.search.create(schemaInfo, model))
+                    return model
             except: pass
-
         raise EpException(404, 'Not Found')
 
-    async def __search_data_with_auth__(
+    async def searchModelsByAuthnUser(
         self,
         request:Request,
-        org:ORG_HEADER,
-        token:AUTH_HEADER,
-        fields:Annotated[List[str] | None, Query(alias='$f', description='looking fields ex) $f=field1&$f=field2')]=None,
-        filter:Annotated[str | None, Query(alias='$filter', description='lucene type filter ex) $filter=fieldName:yourSearchText')]=None,
+        token: AUTH_HEADER,
+        filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
         orderBy:Annotated[str | None, Query(alias='$orderby', description='ordered by specific field')]=None,
         order:Annotated[Literal['asc', 'desc'], Query(alias='$order', description='ordering type')]=None,
         size:Annotated[int | None, Query(alias='$size', description='retrieving model count')]=None,
         skip:Annotated[int | None, Query(alias='$skip', description='skipping model count')]=None,
         archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
     ):
-        authInfo = await self._uerpAuth.getAuthInfo(org, token.credentials)
+        uref = request.scope['path']
+        path = uref
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        authInfo = await self.checkReadable(token, sref)
 
         query = request.query_params._dict
-        if '$f' in query: query.pop('$f')
         if '$filter' in query: query.pop('$filter')
         if '$orderby' in query: query.pop('$orderby')
         if '$order' in query: query.pop('$order')
@@ -483,45 +641,37 @@ class UerpControl(BaseControl):
         if orderBy and not order: order = 'desc'
         if size: size = int(size)
         if skip: skip = int(skip)
-        if archive == '': archive = True
-        elif archive: archive = bool(archive)
-
-        schema = self._uerpPathToSchemaMap[request.scope['path']]
-        schemaInfo = schema.getSchemaInfo()
-
-        query['org'] = authInfo.org
-        qFilter = [f'{key}:{val}' for key, val in query.items()]
-        qFilter = ' AND '.join(qFilter)
-        if filter: filter = f'{qFilter} AND ({filter})'
-        else: filter = qFilter
-        if not authInfo.checkAdmin():
-            if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkReadACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if AAA.checkAccount(schemaInfo.aaa): filter = f'{filter} AND owner:{authInfo.username}'
-            elif AAA.checkGroup(schemaInfo.aaa):
-                gFilter = [f'owner:{group}' for group in authInfo.groups]
-                gFilter = ' OR '.join(gFilter)
-                if gFilter: filter = f'{filter} AND ({gFilter})'
-        filter = parseLucene.parse(filter)
+        query['owner'] = authInfo.username
+        query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
+        if filter: filter = f"{query} AND ({' AND '.join(filter)})"
+        else: filter = query
 
         return await self.searchModels(
-            schema,
-            Search(fields=fields, filter=filter, orderBy=orderBy, order=order, size=size, skip=skip),
-            archive
+            schemaInfo,
+            Search(filter=parseLucene.parse(filter) if filter else None, orderBy=orderBy, order=order, size=size, skip=skip),
+            True if archive == '' or archive == 'true' else False
         )
 
-    async def __search_data_with_free__(
+    async def searchModelsByAuthnGroup(
         self,
         request:Request,
-        fields:Annotated[List[str] | None, Query(alias='$f', description='looking fields ex) $f=field1&$f=field2')]=None,
-        filter:Annotated[str | None, Query(alias='$filter', description='lucene type filter ex) $filter=fieldName:yourSearchText')]=None,
+        token: AUTH_HEADER,
+        group:Annotated[List[str] | None, Query(alias='$group', description='group code for access control ex) $group=group1&$group=group2')]=None,
+        filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
         orderBy:Annotated[str | None, Query(alias='$orderby', description='ordered by specific field')]=None,
         order:Annotated[Literal['asc', 'desc'], Query(alias='$order', description='ordering type')]=None,
         size:Annotated[int | None, Query(alias='$size', description='retrieving model count')]=None,
         skip:Annotated[int | None, Query(alias='$skip', description='skipping model count')]=None,
         archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
     ):
+        uref = request.scope['path']
+        path = uref
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        authInfo = await self.checkReadable(token, sref)
+
         query = request.query_params._dict
-        if '$f' in query: query.pop('$f')
+        if '$group' in query: query.pop('$group')
         if '$filter' in query: query.pop('$filter')
         if '$orderby' in query: query.pop('$orderby')
         if '$order' in query: query.pop('$order')
@@ -531,425 +681,745 @@ class UerpControl(BaseControl):
         if orderBy and not order: order = 'desc'
         if size: size = int(size)
         if skip: skip = int(skip)
-        if archive == '': archive = True
-        elif archive: archive = bool(archive)
-
-        if query:
-            qFilter = [f'{key}:{val}' for key, val in query.items()]
-            qFilter = ' AND '.join(qFilter)
-            if filter: filter = f'{qFilter} AND ({filter})'
-            else: filter = qFilter
-        if filter: filter = parseLucene.parse(filter)
+        if authInfo.checkAdmin(): groups = ''
+        elif not authInfo.groups: raise EpException(403, 'Forbidden')
+        elif group: groups = ' OR '.join([f'owner:{authInfo.checkOnlyGroup(gid)}' for gid in group])
+        else: groups = ' OR '.join([f'owner:{gid}' for gid in authInfo.groups])
+        query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
+        if groups:
+            if query:
+                if filter: filter = f"({groups}) AND ({query}) AND ({' AND '.join(filter)})"
+                else: filter = f'({groups}) AND ({query})'
+            else:
+                if filter: filter = f"({groups}) AND ({' AND '.join(filter)})"
+                else: filter = groups
+        else:
+            if query:
+                if filter: filter = f"({query}) AND ({' AND '.join(filter)})"
+                else: filter = query
+            else:
+                if filter: filter = ' AND '.join(filter)
+                else: filter = ''
 
         return await self.searchModels(
-            self._uerpPathToSchemaMap[request.scope['path']],
-            Search(fields=fields, filter=filter, orderBy=orderBy, order=order, size=size, skip=skip),
-            archive
+            schemaInfo,
+            Search(filter=parseLucene.parse(filter) if filter else None, orderBy=orderBy, order=order, size=size, skip=skip),
+            True if archive == '' or archive == 'true' else False
+        )
+
+    async def searchModelsByAuthn(
+        self,
+        request:Request,
+        token: AUTH_HEADER,
+        filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
+        orderBy:Annotated[str | None, Query(alias='$orderby', description='ordered by specific field')]=None,
+        order:Annotated[Literal['asc', 'desc'], Query(alias='$order', description='ordering type')]=None,
+        size:Annotated[int | None, Query(alias='$size', description='retrieving model count')]=None,
+        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count')]=None,
+        archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
+    ):
+        uref = request.scope['path']
+        path = uref
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        await self.checkReadable(token, sref)
+
+        query = request.query_params._dict
+        if '$filter' in query: query.pop('$filter')
+        if '$orderby' in query: query.pop('$orderby')
+        if '$order' in query: query.pop('$order')
+        if '$size' in query: query.pop('$size')
+        if '$skip' in query: query.pop('$skip')
+        if '$archive' in query: query.pop('$archive')
+        if orderBy and not order: order = 'desc'
+        if size: size = int(size)
+        if skip: skip = int(skip)
+        query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
+        if query:
+            if filter: filter = f"({query}) AND ({' AND '.join(filter)})"
+            else: filter = query
+        else:
+            if filter: filter = ' AND '.join(filter)
+            else: filter = ''
+
+        return await self.searchModels(
+            schemaInfo,
+            Search(filter=parseLucene.parse(filter) if filter else None, orderBy=orderBy, order=order, size=size, skip=skip),
+            True if archive == '' or archive == 'true' else False
+        )
+
+    async def searchModelsByAuth(
+        self,
+        request:Request,
+        token: AUTH_HEADER,
+        filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
+        orderBy:Annotated[str | None, Query(alias='$orderby', description='ordered by specific field')]=None,
+        order:Annotated[Literal['asc', 'desc'], Query(alias='$order', description='ordering type')]=None,
+        size:Annotated[int | None, Query(alias='$size', description='retrieving model count')]=None,
+        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count')]=None,
+        archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
+    ):
+        uref = request.scope['path']
+        path = uref
+        schemaInfo = self.schemaInfoMap[path]
+        await self.checkAuthorization(token)
+
+        query = request.query_params._dict
+        if '$filter' in query: query.pop('$filter')
+        if '$orderby' in query: query.pop('$orderby')
+        if '$order' in query: query.pop('$order')
+        if '$size' in query: query.pop('$size')
+        if '$skip' in query: query.pop('$skip')
+        if '$archive' in query: query.pop('$archive')
+        if orderBy and not order: order = 'desc'
+        if size: size = int(size)
+        if skip: skip = int(skip)
+        query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
+        if query:
+            if filter: filter = f"({query}) AND ({' AND '.join(filter)})"
+            else: filter = query
+        else:
+            if filter: filter = ' AND '.join(filter)
+            else: filter = ''
+
+        return await self.searchModels(
+            schemaInfo,
+            Search(filter=parseLucene.parse(filter) if filter else None, orderBy=orderBy, order=order, size=size, skip=skip),
+            True if archive == '' or archive == 'true' else False
+        )
+
+    async def searchModelsByAnony(
+        self,
+        request:Request,
+        filter:Annotated[str | None, Query(alias='$filter', description='lucene type filter ex) $filter=fieldName:yourSearchText')]=None,
+        orderBy:Annotated[str | None, Query(alias='$orderby', description='ordered by specific field')]=None,
+        order:Annotated[Literal['asc', 'desc'], Query(alias='$order', description='ordering type')]=None,
+        size:Annotated[int | None, Query(alias='$size', description='retrieving model count')]=None,
+        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count')]=None,
+        archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
+    ):
+        uref = request.scope['path']
+        path = uref
+        schemaInfo = self.schemaInfoMap[path]
+
+        query = request.query_params._dict
+        if '$filter' in query: query.pop('$filter')
+        if '$orderby' in query: query.pop('$orderby')
+        if '$order' in query: query.pop('$order')
+        if '$size' in query: query.pop('$size')
+        if '$skip' in query: query.pop('$skip')
+        if '$archive' in query: query.pop('$archive')
+        if orderBy and not order: order = 'desc'
+        if size: size = int(size)
+        if skip: skip = int(skip)
+        query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
+        if query:
+            if filter: filter = f"({query}) AND ({' AND '.join(filter)})"
+            else: filter = query
+        else:
+            if filter: filter = ' AND '.join(filter)
+            else: filter = ''
+
+        return await self.searchModels(
+            schemaInfo,
+            Search(filter=parseLucene.parse(filter) if filter else None, orderBy=orderBy, order=order, size=size, skip=skip),
+            True if archive == '' or archive == 'true' else False
         )
 
     async def searchModels(
         self,
-        schema,
+        schemaInfo,
         search,
         archive
     ):
-        schemaInfo = schema.getSchemaInfo()
-
         if archive and LAYER.checkDatabase(schemaInfo.layer):
-            try: models = await self._uerpDatabase.search(schema, search)
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
+            try: models = await self.database.search(schemaInfo, search)
+            except LookupError: raise EpException(400, 'Bad Request')
             except:
                 if LAYER.checkSearch(schemaInfo.layer):
-                    try: models = await self._uerpSearch(schema, search)
-                    except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-                    except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+                    try: models = await self.search.search(schemaInfo, search)
+                    except LookupError: raise EpException(400, 'Bad Request')
+                    except Exception: raise EpException(503, 'Service Unavailable')
                     else:
-                        if models and not search.fields and LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.create(schema, *models))
+                        if models and LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.create(schemaInfo, *models))
                 else: raise EpException(503, 'Service Unavailable')
             else:
-                if models and not search.fields:
-                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.create(schema, *models))
-                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self._uerpSearch.create(schema, *models))
-            return [schema(**model) for model in models]
+                if models:
+                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.create(schemaInfo, *models))
+                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self.search.create(schemaInfo, *models))
+            return models
         elif LAYER.checkSearch(schemaInfo.layer):
-            try: models = await self._uerpSearch(schema, search)
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
+            try: models = await self.search.search(schemaInfo, search)
+            except LookupError: raise EpException(400, 'Bad Request')
             except Exception:
                 if LAYER.checkDatabase(schemaInfo.layer):
-                    try: models = await self._uerpDatabase.search(schema, search)
-                    except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-                    except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+                    try: models = await self.database.search(schemaInfo, search)
+                    except LookupError: raise EpException(400, 'Bad Request')
+                    except Exception: raise EpException(503, 'Service Unavailable')
                     else:
-                        if models and not search.fields:
-                            if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.create(schema, *models))
-                            if LAYER.checkSearch(schemaInfo.layer): await runBackground(self._uerpSearch.create(schema, *models))
+                        if models:
+                            if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.create(schemaInfo, *models))
+                            if LAYER.checkSearch(schemaInfo.layer): await runBackground(self.search.create(schemaInfo, *models))
                 else: raise EpException(503, 'Service Unavailable')
             else:
-                if models and not search.fields and LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.create(schema, *models))
-            return [schema(**model) for model in models]
+                if models and LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.create(schemaInfo, *models))
+            return models
 
         raise EpException(501, 'Not Implemented')
 
-    async def __count_data_with_auth__(
+    async def countModelsByAuthnUser(
         self,
         request:Request,
-        org: ORG_HEADER,
         token: AUTH_HEADER,
-        filter:Annotated[str | None, Query(alias='$filter', description='lucene type filter ex) $filter=fieldName:yourSearchText')]=None,
+        filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
         archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
     ):
-        authInfo = await self._uerpAuth.getAuthInfo(org, token.credentials)
+        uref = request.scope['path']
+        path = uref.replace('/count', '')
+        queryString = request.scope['query_string']
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        authInfo = await self.checkReadable(token, sref)
 
         query = request.query_params._dict
         if '$filter' in query: query.pop('$filter')
         if '$archive' in query: query.pop('$archive')
-        if archive == '': archive = True
-        elif archive: archive = bool(archive)
+        query['owner'] = authInfo.username
+        query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
+        if filter: filter = f"{query} AND ({' AND '.join(filter)})"
+        else: filter = query
 
-        uref = request.scope['path']
-        path = uref.replace('/count', '')
-        queryString = request.scope['query_string']
+        return ModelCount(
+            sref=sref,
+            uref=uref,
+            query=queryString,
+            result=await self.countModels(
+                schemaInfo,
+                Search(filter=parseLucene.parse(filter) if filter else None),
+                True if archive == '' or archive == 'true' else False
+            )
+        )
 
-        schema = self._uerpPathToSchemaMap[path]
-        schemaInfo = schema.getSchemaInfo()
-
-        query['org'] = authInfo.org
-        qFilter = [f'{key}:{val}' for key, val in query.items()]
-        qFilter = ' AND '.join(qFilter)
-        if filter: filter = f'{qFilter} AND ({filter})'
-        else: filter = qFilter
-        if not authInfo.checkAdmin():
-            if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkReadACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if AAA.checkAccount(schemaInfo.aaa): filter = f'{filter} AND owner:{authInfo.username}'
-            elif AAA.checkGroup(schemaInfo.aaa):
-                gFilter = [f'owner:{group}' for group in authInfo.groups]
-                gFilter = ' OR '.join(gFilter)
-                if gFilter: filter = f'{filter} AND ({gFilter})'
-        filter = parseLucene.parse(filter)
-
-        return ModelCount(sref=schema.sref, uref=uref, query=queryString, result=await self.countModels(
-            schema,
-            Search(filter=filter),
-            archive
-        ))
-
-    async def __count_data_with_free__(
+    async def countModelsByAuthnGroup(
         self,
         request:Request,
-        filter:Annotated[str | None, Query(alias='$filter', description='lucene type filter ex) $filter=fieldName:yourSearchText')]=None,
+        token: AUTH_HEADER,
+        group:Annotated[List[str] | None, Query(alias='$group', description='group code for access control ex) $group=group1&$group=group2')]=None,
+        filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
         archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
     ):
-        query = request.query_params._dict
-        if '$filter' in query: query.pop('$filter')
-        if '$archive' in query: query.pop('$archive')
-        if archive == '': archive = True
-        elif archive: archive = bool(archive)
-
         uref = request.scope['path']
         path = uref.replace('/count', '')
         queryString = request.scope['query_string']
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        authInfo = await self.checkReadable(token, sref)
 
-        schema = self._uerpPathToSchemaMap[path]
+        query = request.query_params._dict
+        if '$group' in query: query.pop('$group')
+        if '$filter' in query: query.pop('$filter')
+        if '$archive' in query: query.pop('$archive')
+        if authInfo.checkAdmin(): groups = ''
+        elif not authInfo.groups: raise EpException(403, 'Forbidden')
+        elif group: groups = ' OR '.join([f'owner:{authInfo.checkOnlyGroup(gid)}' for gid in group])
+        else: groups = ' OR '.join([f'owner:{gid}' for gid in authInfo.groups])
+        query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
+        if groups:
+            if query:
+                if filter: filter = f"({groups}) AND ({query}) AND ({' AND '.join(filter)})"
+                else: filter = f'({groups}) AND ({query})'
+            else:
+                if filter: filter = f"({groups}) AND ({' AND '.join(filter)})"
+                else: filter = groups
+        else:
+            if query:
+                if filter: filter = f"({query}) AND ({' AND '.join(filter)})"
+                else: filter = query
+            else:
+                if filter: filter = ' AND '.join(filter)
+                else: filter = ''
 
+        return ModelCount(
+            sref=sref,
+            uref=uref,
+            query=queryString,
+            result=await self.countModels(
+                schemaInfo,
+                Search(filter=parseLucene.parse(filter) if filter else None),
+                True if archive == '' or archive == 'true' else False
+            )
+        )
+
+    async def countModelsByAuthn(
+        self,
+        request:Request,
+        token: AUTH_HEADER,
+        filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
+        archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
+    ):
+        uref = request.scope['path']
+        path = uref.replace('/count', '')
+        queryString = request.scope['query_string']
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        await self.checkReadable(token, sref)
+
+        query = request.query_params._dict
+        if '$filter' in query: query.pop('$filter')
+        if '$archive' in query: query.pop('$archive')
+        query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
         if query:
-            qFilter = [f'{key}:{val}' for key, val in query.items()]
-            qFilter = ' AND '.join(qFilter)
-            if filter: filter = f'{qFilter} AND ({filter})'
-            else: filter = qFilter
-        if filter: filter = parseLucene.parse(filter)
+            if filter: filter = f"({query}) AND ({' AND '.join(filter)})"
+            else: filter = query
+        else:
+            if filter: filter = ' AND '.join(filter)
+            else: filter = ''
 
-        return ModelCount(sref=schema.sref, uref=uref, query=queryString, result=await self.countModels(
-            schema,
-            Search(filter=filter),
-            archive
-        ))
+        return ModelCount(
+            sref=sref,
+            uref=uref,
+            query=queryString,
+            result=await self.countModels(
+                schemaInfo,
+                Search(filter=parseLucene.parse(filter) if filter else None),
+                True if archive == '' or archive == 'true' else False
+            )
+        )
+
+    async def countModelsByAuth(
+        self,
+        request:Request,
+        token: AUTH_HEADER,
+        filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
+        archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
+    ):
+        uref = request.scope['path']
+        path = uref.replace('/count', '')
+        queryString = request.scope['query_string']
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        await self.checkAuthorization(token)
+
+        query = request.query_params._dict
+        if '$filter' in query: query.pop('$filter')
+        if '$archive' in query: query.pop('$archive')
+        query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
+        if query:
+            if filter: filter = f"({query}) AND ({' AND '.join(filter)})"
+            else: filter = query
+        else:
+            if filter: filter = ' AND '.join(filter)
+            else: filter = ''
+
+        return ModelCount(
+            sref=sref,
+            uref=uref,
+            query=queryString,
+            result=await self.countModels(
+                schemaInfo,
+                Search(filter=parseLucene.parse(filter) if filter else None),
+                True if archive == '' or archive == 'true' else False
+            )
+        )
+
+    async def countModelsByAnony(
+        self,
+        request:Request,
+        filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
+        archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
+    ):
+        uref = request.scope['path']
+        path = uref.replace('/count', '')
+        queryString = request.scope['query_string']
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+
+        query = request.query_params._dict
+        if '$filter' in query: query.pop('$filter')
+        if '$archive' in query: query.pop('$archive')
+        query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
+        if query:
+            if filter: filter = f"({query}) AND ({' AND '.join(filter)})"
+            else: filter = query
+        else:
+            if filter: filter = ' AND '.join(filter)
+            else: filter = ''
+
+        return ModelCount(
+            sref=sref,
+            uref=uref,
+            query=queryString,
+            result=await self.countModels(
+                schemaInfo,
+                Search(filter=parseLucene.parse(filter) if filter else None),
+                True if archive == '' or archive == 'true' else False
+            )
+        )
 
     async def countModels(
         self,
-        schema,
+        schemaInfo,
         search,
         archive
     ):
-        schemaInfo = schema.getSchemaInfo()
-
         if archive and LAYER.checkDatabase(schemaInfo.layer):
-            try: return await self._uerpDatabase.count(schema, search)
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
+            try: return await self.database.count(schemaInfo, search)
+            except LookupError: raise EpException(400, 'Bad Request')
             except:
                 if LAYER.checkSearch(schemaInfo.layer):
-                    try: return await self._uerpSearch.count(schema, search)
-                    except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-                    except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+                    try: return await self.search.count(schemaInfo, search)
+                    except LookupError: raise EpException(400, 'Bad Request')
+                    except Exception: raise EpException(503, 'Service Unavailable')
                 else: raise EpException(503, 'Service Unavailable')
         elif LAYER.checkSearch(schemaInfo.layer):
-            try: return await self._uerpSearch.count(schema, search)
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except:
+            try: return await self.search.count(schemaInfo, search)
+            except LookupError: raise EpException(400, 'Bad Request')
+            except Exception as e:
                 if LAYER.checkDatabase(schemaInfo.layer):
-                    try: return await self._uerpDatabase.count(schema, search)
-                    except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-                    except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+                    try: return await self.database.count(schemaInfo, search)
+                    except LookupError: raise EpException(400, 'Bad Request')
+                    except Exception as e: raise EpException(503, f'Service Unavailable {e}')
                 else: raise EpException(503, 'Service Unavailable')
 
         raise EpException(501, 'Not Implemented')
 
-    async def __create_data_with_auth__(
+    async def createModelByAuthnUser(
         self,
-        org: ORG_HEADER,
-        token: AUTH_HEADER,
-        model:BaseModel
+        token:AUTH_HEADER,
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
     ):
-        authInfo = await self._uerpAuth.getAuthInfo(org, token.credentials)
+        schemaInfo = model.__class__.getSchemaInfo()
+        authInfo = await self.checkCreatable(token, schemaInfo.sref)
+        data = await self.createModel(schemaInfo, model.setID().updateStatus(authInfo.username).model_dump())
+        await self.publishToRouter(publish, 'user', authInfo.username, 'created', data)
+        return data
 
-        schema = model.__class__
-        schemaInfo = schema.getSchemaInfo()
-
-        if not authInfo.checkAdmin() and AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkCreateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-        return await self.createModel(schema, model.setID().updateStatus(org=authInfo.org, owner=authInfo.username).model_dump())
-
-    async def __create_data_with_auth_by_group__(
+    async def createModelByAuthnGroup(
         self,
-        org: ORG_HEADER,
-        token: AUTH_HEADER,
-        groupId:Annotated[ID, Query(alias='$group', description='group id for access control')],
-        model:BaseModel
+        token:AUTH_HEADER,
+        group:Annotated[str, Query(alias='$group', description='group code for access control')],
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
     ):
-        authInfo = await self._uerpAuth.getAuthInfo(org, token.credentials)
+        schemaInfo = model.__class__.getSchemaInfo()
+        await self.checkCreatable(token, schemaInfo.sref)
+        data = await self.createModel(schemaInfo, model.setID().updateStatus(group).model_dump())
+        await self.publishToRouter(publish, 'group', group, 'created', data)
+        return data
 
-        schema = model.__class__
-        schemaInfo = schema.getSchemaInfo()
-        groupId = str(groupId)
-
-        if not authInfo.checkAdmin():
-            if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkCreateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if not authInfo.checkGroup(groupId): raise EpException(403, 'Forbidden')
-        return await self.createModel(schema, model.setID().updateStatus(org=authInfo.org, owner=groupId).model_dump())
-
-    async def __create_data_with_free__(
+    async def createModelByAuthn(
         self,
-        model:BaseModel
+        token:AUTH_HEADER,
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
     ):
-        return await self.createModel(model.__class__, model.setID().updateStatus().model_dump())
+        schemaInfo = model.__class__.getSchemaInfo()
+        authInfo = await self.checkCreatable(token, schemaInfo.sref)
+        data = await self.createModel(schemaInfo, model.setID().updateStatus(authInfo.username).model_dump())
+        await self.publishToRouter(publish, 'group', self.userRoleName, 'created', data)
+        return data
+
+    async def createModelByAuth(
+        self,
+        token:AUTH_HEADER,
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        schemaInfo = model.__class__.getSchemaInfo()
+        authInfo = await self.checkAuthorization(token)
+        data = await self.createModel(schemaInfo, model.setID().updateStatus(authInfo.username).model_dump())
+        await self.publishToRouter(publish, 'group', self.userRoleName, 'created', data)
+        return data
+
+    async def createModelByAnony(
+        self,
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        schemaInfo = model.__class__.getSchemaInfo()
+        data = await self.createModel(schemaInfo, model.setID().updateStatus().model_dump())
+        await self.publishToRouter(publish, 'group', self.userRoleName, 'created', data)
+        return data
 
     async def createModel(
         self,
-        schema,
+        schemaInfo,
         data
     ):
-        schemaInfo = schema.getSchemaInfo()
         if schemaInfo.createHandler: data = await schemaInfo.createHandler(data)
         if LAYER.checkDatabase(schemaInfo.layer):
-            try: result = (await self._uerpDatabase.create(schema, data))[0]
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            try: result = (await self.database.create(schemaInfo, data))[0]
+            except LookupError: raise EpException(400, 'Bad Request')
+            except Exception: raise EpException(503, 'Service Unavailable')
             else:
                 if result:
-                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.create(schema, data))
-                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self._uerpSearch.create(schema, data))
+                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.create(schemaInfo, data))
+                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self.search.create(schemaInfo, data))
                     return data
                 else: raise EpException(409, 'Conflict')
         elif LAYER.checkSearch(schemaInfo.layer):
-            try: await self._uerpSearch.create(schema, data)
-            except LookupError as e: LOG.ERROR(e); traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except Exception as e: LOG.ERROR(e); traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            try: await self.search.create(schemaInfo, data)
+            except LookupError as e: LOG.ERROR(e); raise EpException(400, 'Bad Request')
+            except Exception as e: LOG.ERROR(e); raise EpException(503, 'Service Unavailable')
             else:
-                if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.create(schema, data))
+                if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.create(schemaInfo, data))
                 return data
         elif LAYER.checkCache(schemaInfo.layer):
-            try: await self._uerpCache.create(schema, data)
-            except LookupError as e: LOG.ERROR(e); traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except Exception as e: LOG.ERROR(e); traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            try: await self.cache.create(schemaInfo, data)
+            except LookupError as e: LOG.ERROR(e); raise EpException(400, 'Bad Request')
+            except Exception as e: LOG.ERROR(e); raise EpException(503, 'Service Unavailable')
             else: return data
         else: raise EpException(501, 'Not Implemented')
 
-    async def __update_data_with_auth__(
+    async def updateModelByAuthnUser(
         self,
-        org: ORG_HEADER,
-        token: AUTH_HEADER,
+        token:AUTH_HEADER,
         id:ID,
-        model:BaseModel
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
     ):
-        authInfo = await self._uerpAuth.getAuthInfo(org, token.credentials)
-
         id = str(id)
-        schema = model.__class__
-        schemaInfo = schema.getSchemaInfo()
+        schemaInfo = model.__class__.getSchemaInfo()
+        authInfo = await self.checkUpdatable(token, schemaInfo.sref)
+        origin = await self.readModel(schemaInfo, id)
+        owner = origin['owner']
+        authInfo.checkUsername(owner)
+        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(owner).model_dump())
+        await self.publishToRouter(publish, 'user', owner, 'updated', data)
+        return data
 
-        origin = await self.readModel(schema, id)
-        if not authInfo.checkAdmin():
-            if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkUpdateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if origin.org and not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
-            if AAA.checkAccount(schemaInfo.aaa) and not authInfo.checkUsername(origin.owner): raise EpException(403, 'Forbidden')
-        return await self.updateModel(schema, model.setID(id).updateStatus(org=authInfo.org, owner=authInfo.username).model_dump())
-
-    async def __update_data_with_auth_by_group__(
+    async def updateModelByAuthnGroup(
         self,
-        org: ORG_HEADER,
-        token: AUTH_HEADER,
+        token:AUTH_HEADER,
         id:ID,
-        model:BaseModel
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
     ):
-        authInfo = await self._uerpAuth.getAuthInfo(org, token.credentials)
-
         id = str(id)
-        schema = model.__class__
-        schemaInfo = schema.getSchemaInfo()
+        schemaInfo = model.__class__.getSchemaInfo()
+        authInfo = await self.checkUpdatable(token, schemaInfo.sref)
+        origin = await self.readModel(schemaInfo, id)
+        owner = origin['owner']
+        authInfo.checkGroup(owner)
+        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(owner).model_dump())
+        await self.publishToRouter(publish, 'group', owner, 'updated', data)
+        return data
 
-        origin = await self.readModel(schema, id)
-        if not authInfo.checkAdmin():
-            if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkUpdateACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if origin.org and not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
-            if not authInfo.checkGroup(origin.owner): raise EpException(403, 'Forbidden')
-        return await self.updateModel(schema, model.setID(id).updateStatus(org=authInfo.org, owner=origin.owner).model_dump())
+    async def updateModelByAuthn(
+        self,
+        token:AUTH_HEADER,
+        id:ID,
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        id = str(id)
+        schemaInfo = model.__class__.getSchemaInfo()
+        await self.checkUpdatable(token, schemaInfo.sref)
+        origin = await self.readModel(schemaInfo, id)
+        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(origin['owner']).model_dump())
+        await self.publishToRouter(publish, 'group', self.userRoleName, 'updated', data)
+        return data
 
-    async def __update_data_with_free__(
+    async def updateModelByAuth(
+        self,
+        token:AUTH_HEADER,
+        id:ID,
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        id = str(id)
+        schemaInfo = model.__class__.getSchemaInfo()
+        await self.checkAuthorization(token)
+        origin = await self.readModel(schemaInfo, id)
+        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(origin['owner']).model_dump())
+        await self.publishToRouter(publish, 'group', self.userRoleName, 'updated', data)
+        return data
+
+    async def updateModelByAnony(
         self,
         id:ID,
-        model:BaseModel
+        model:BaseModel,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
     ):
-        schema = model.__class__
-        return await self.updateModel(schema, model.setID(str(id)).updateStatus().model_dump())
+        id = str(id)
+        schemaInfo = model.__class__.getSchemaInfo()
+        origin = await self.readModel(schemaInfo, id)
+        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(origin['owner']).model_dump())
+        await self.publishToRouter(publish, 'group', self.userRoleName, 'updated', data)
+        return data
 
     async def updateModel(
         self,
-        schema,
+        schemaInfo,
         data
     ):
-        schemaInfo = schema.getSchemaInfo()
         if schemaInfo.updateHandler: data = await schemaInfo.updateHandler(data)
         if LAYER.checkDatabase(schemaInfo.layer):
-            try: result = (await self._uerpDatabase.update(schema, data))[0]
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            try: result = (await self.database.update(schemaInfo, data))[0]
+            except LookupError: raise EpException(400, 'Bad Request')
+            except Exception: raise EpException(503, 'Service Unavailable')
             else:
                 if result:
-                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.update(schema, data))
-                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self._uerpSearch.update(schema, data))
+                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.update(schemaInfo, data))
+                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self.search.update(schemaInfo, data))
                     return data
                 else: raise EpException(409, 'Conflict')
         elif LAYER.checkSearch(schemaInfo.layer):
-            try: await self._uerpSearch.update(schema, data)
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            try: await self.search.update(schemaInfo, data)
+            except LookupError: raise EpException(400, 'Bad Request')
+            except Exception: raise EpException(503, 'Service Unavailable')
             else:
-                if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.update(schema, data))
+                if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.update(schemaInfo, data))
                 return data
         elif LAYER.checkCache(schemaInfo.layer):
-            try: await self._uerpCache.update(schema, data)
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            try: await self.cache.update(schemaInfo, data)
+            except LookupError: raise EpException(400, 'Bad Request')
+            except Exception: raise EpException(503, 'Service Unavailable')
             else: return data
         else: raise EpException(501, 'Not Implemented')
 
-    async def __delete_data_with_auth__(
+    async def deleteModelByAuthnUser(
         self,
         request:Request,
-        org: ORG_HEADER,
-        token: AUTH_HEADER,
+        token:AUTH_HEADER,
         id:ID,
-        force:Annotated[Literal['true', 'false', ''], Query(alias='$force')]=None
+        force:Annotated[Literal['true', 'false', ''], Query(alias='$force', description='delete permanently')]=None,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
     ):
-        authInfo = await self._uerpAuth.getAuthInfo(org, token.credentials)
-
-        if force == '': force = True
-        elif force: force = bool(force)
-
         id = str(id)
         uref = request.scope['path']
         path = uref.replace(f'/{id}', '')
-        schema = self._uerpPathToSchemaMap[path]
-        schemaInfo = schema.getSchemaInfo()
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        authInfo = await self.checkDeletable(token, sref)
+        origin = await self.readModel(schemaInfo, id)
+        owner = origin['owner']
+        authInfo.checkUsername(owner)
+        origin['deleted'] = True
+        origin['tstamp'] = getTStamp()
+        await self.deleteModel(schemaInfo, id, origin, True if force == '' or force == 'true' else False)
+        await self.publishToRouter(publish, 'user', owner, 'deleted', origin)
+        return ModelStatus(id=id, sref=sref, uref=uref, status='deleted')
 
-        origin = await self.readModel(schema, id)
-        if not authInfo.checkAdmin():
-            if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkDeleteACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if origin.org and not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
-            if AAA.checkAccount(schemaInfo.aaa) and not authInfo.checkUsername(origin.owner): raise EpException(403, 'Forbidden')
-
-        await self.deleteModel(schema, id, origin.setID(id).updateStatus(org=authInfo.org, owner=authInfo.username, deleted=True).model_dump(), force)
-        return ModelStatus(id=id, sref=schemaInfo.sref, uref=uref, status='deleted')
-
-    async def __delete_data_with_auth_by_group__(
+    async def deleteModelByAuthnGroup(
         self,
         request:Request,
-        org: ORG_HEADER,
-        token: AUTH_HEADER,
+        token:AUTH_HEADER,
         id:ID,
-        force:Annotated[Literal['true', 'false', ''], Query(alias='$force')]=None
+        force:Annotated[Literal['true', 'false', ''], Query(alias='$force', description='delete permanently')]=None,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
     ):
-        authInfo = await self._uerpAuth.getAuthInfo(org, token.credentials)
-
-        if force == '': force = True
-        elif force: force = bool(force)
-
         id = str(id)
         uref = request.scope['path']
         path = uref.replace(f'/{id}', '')
-        schema = self._uerpPathToSchemaMap[path]
-        schemaInfo = schema.getSchemaInfo()
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        authInfo = await self.checkDeletable(token, sref)
+        origin = await self.readModel(schemaInfo, id)
+        owner = origin['owner']
+        authInfo.checkGroup(owner)
+        origin['deleted'] = True
+        origin['tstamp'] = getTStamp()
+        await self.deleteModel(schemaInfo, id, origin, True if force == '' or force == 'true' else False)
+        await self.publishToRouter(publish, 'group', owner, 'deleted', origin)
+        return ModelStatus(id=id, sref=sref, uref=uref, status='deleted')
 
-        origin = await self.readModel(schema, id)
-        if not authInfo.checkAdmin():
-            if AAA.checkAuthentication(schemaInfo.aaa) and not authInfo.checkDeleteACL(schemaInfo.sref): raise EpException(403, 'Forbidden')
-            if origin.org and not authInfo.checkOrg(origin.org): raise EpException(403, 'Forbidden')
-            if not authInfo.checkGroup(origin.owner): raise EpException(403, 'Forbidden')
-
-        await self.deleteModel(schema, id, origin.setID(id).updateStatus(org=authInfo.org, owner=origin.owner, deleted=True).model_dump(), force)
-        return ModelStatus(id=id, sref=schemaInfo.sref, uref=uref, status='deleted')
-
-    async def __delete_data_with_free__(
+    async def deleteModelByAuthn(
         self,
         request:Request,
+        token:AUTH_HEADER,
         id:ID,
-        force:Annotated[Literal['true', 'false', ''], Query(alias='$force')]=None
+        force:Annotated[Literal['true', 'false', ''], Query(alias='$force', description='delete permanently')]=None,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
     ):
-        if force == '': force = True
-        elif force: force = bool(force)
-
         id = str(id)
         uref = request.scope['path']
         path = uref.replace(f'/{id}', '')
-        schema = self._uerpPathToSchemaMap[path]
-        schemaInfo = schema.getSchemaInfo()
-        model = await self.readModel(schema, id)
-        await self.deleteModel(schema, id, model.setID(id).updateStatus(deleted=True).model_dump(), force)
-        return ModelStatus(id=id, sref=schemaInfo.sref, uref=uref, status='deleted')
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        await self.checkDeletable(token, sref)
+        origin = await self.readModel(schemaInfo, id)
+        origin['deleted'] = True
+        origin['tstamp'] = getTStamp()
+        await self.deleteModel(schemaInfo, id, origin, True if force == '' or force == 'true' else False)
+        await self.publishToRouter(publish, 'group', self.userRoleName, 'deleted', origin)
+        return ModelStatus(id=id, sref=sref, uref=uref, status='deleted')
+
+    async def deleteModelByAuth(
+        self,
+        request:Request,
+        token:AUTH_HEADER,
+        id:ID,
+        force:Annotated[Literal['true', 'false', ''], Query(alias='$force', description='delete permanently')]=None,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        id = str(id)
+        uref = request.scope['path']
+        path = uref.replace(f'/{id}', '')
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        await self.checkAuthorization(token)
+        origin = await self.readModel(schemaInfo, id)
+        origin['deleted'] = True
+        origin['tstamp'] = getTStamp()
+        await self.deleteModel(schemaInfo, id, origin, True if force == '' or force == 'true' else False)
+        await self.publishToRouter(publish, 'group', self.userRoleName, 'deleted', origin)
+        return ModelStatus(id=id, sref=sref, uref=uref, status='deleted')
+
+    async def deleteModelByAnony(
+        self,
+        request:Request,
+        id:ID,
+        force:Annotated[Literal['true', 'false', ''], Query(alias='$force', description='delete permanently')]=None,
+        publish:Annotated[Literal['true', 'false', ''], Query(alias='$publish', description='publish to user notification')]=None
+    ):
+        id = str(id)
+        uref = request.scope['path']
+        path = uref.replace(f'/{id}', '')
+        schemaInfo = self.schemaInfoMap[path]
+        sref = schemaInfo.sref
+        origin = await self.readModel(schemaInfo, id)
+        origin['deleted'] = True
+        origin['tstamp'] = getTStamp()
+        await self.deleteModel(schemaInfo, id, origin, True if force == '' or force == 'true' else False)
+        await self.publishToRouter(publish, 'group', self.userRoleName, 'deleted', origin)
+        return ModelStatus(id=id, sref=sref, uref=uref, status='deleted')
 
     async def deleteModel(
         self,
-        schema,
+        schemaInfo,
         id,
         data,
         force
     ):
-        schemaInfo = schema.getSchemaInfo()
         if schemaInfo.deleteHandler: data = await schemaInfo.deleteHandler(data)
         if force and LAYER.checkDatabase(schemaInfo.layer):
-            try: result = await self._uerpDatabase.delete(schema, id)
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            try: result = await self.database.delete(schemaInfo, id)
+            except LookupError: raise EpException(400, 'Bad Request')
+            except Exception: raise EpException(503, 'Service Unavailable')
             else:
                 if result:
-                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.delete(schema, id))
-                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self._uerpSearch.delete(schema, id))
+                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.delete(schemaInfo, id))
+                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self.search.delete(schemaInfo, id))
                 else: raise EpException(409, 'Conflict')
         elif LAYER.checkDatabase(schemaInfo.layer):
-            try: result = (await self._uerpDatabase.update(schema, data))[0]
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            try: result = (await self.database.update(schemaInfo, data))[0]
+            except LookupError: raise EpException(400, 'Bad Request')
+            except Exception: raise EpException(503, 'Service Unavailable')
             else:
                 if result:
-                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.delete(schema, id))
-                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self._uerpSearch.delete(schema, id))
+                    if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.delete(schemaInfo, id))
+                    if LAYER.checkSearch(schemaInfo.layer): await runBackground(self.search.delete(schemaInfo, id))
                 else: raise EpException(409, 'Conflict')
         elif LAYER.checkSearch(schemaInfo.layer):
-            try: await self._uerpSearch.delete(schema, id)
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            try: await self.search.delete(schemaInfo, id)
+            except LookupError: raise EpException(400, 'Bad Request')
+            except Exception: raise EpException(503, 'Service Unavailable')
             else:
-                if LAYER.checkCache(schemaInfo.layer): await runBackground(self._uerpCache.delete(schema, id))
+                if LAYER.checkCache(schemaInfo.layer): await runBackground(self.cache.delete(schemaInfo, id))
         elif LAYER.checkCache(schemaInfo.layer):
-            try: await self._uerpCache.delete(schema, id)
-            except LookupError: traceback.print_exc(); raise EpException(400, 'Bad Request')
-            except Exception: traceback.print_exc(); raise EpException(503, 'Service Unavailable')
+            try: await self.cache.delete(schemaInfo, id)
+            except LookupError: raise EpException(400, 'Bad Request')
+            except Exception: raise EpException(503, 'Service Unavailable')
         else: raise EpException(501, 'Not Implemented')

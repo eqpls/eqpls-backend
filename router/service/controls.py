@@ -7,59 +7,87 @@ Equal Plus
 #===============================================================================
 # Import
 #===============================================================================
+try: import LOG  # @UnresolvedImport
+except: pass
+
 import traceback
-
 from fastapi import WebSocketDisconnect
-
-from common import MeshControl
+from common import SessionControl
+from driver.redis import RedisAccount, RedisQueue
 
 
 #===============================================================================
 # Implement
 #===============================================================================
-class Control(MeshControl):
+class Control(SessionControl):
 
     def __init__(self, path):
-        MeshControl.__init__(self, path, sessionChecker='uerp')
-        self.sockets = {}
+        SessionControl.__init__(self, path, RedisAccount)
+        self.queue = RedisQueue(self)
+        self.userSockets = {}
+        self.groupSockets = {}
 
-    async def startup(self): pass
+    async def startup(self):
+        await self.queue.connect()
+        await self.queue.subscribe(self.listenQueue)
 
-    async def shutdown(self): pass
+    async def shutdown(self):
+        await self.queue.disconnect()
 
-    def createWSockPayload(self, key, value): return [key, value]
+    async def listenQueue(self, category, target, key, val):
+        if category == 'group':
+            if target in self.groupSockets:
+                for socket in self.groupSockets[target]:
+                    try: await socket.send_json([key, val])
+                    except: pass
+                LOG.DEBUG(f'send to {self.tenant}:group:{target}')
+        elif category == 'user':
+            if target in self.userSockets:
+                for socket in self.userSockets[target]:
+                    try: await socket.send_json([key, val])
+                    except: pass
+                LOG.DEBUG(f'send to {self.tenant}:user:{target}')
 
-    async def sendWSockData(self, username, payload):
-        if username in self.sockets:
-            for socket in self.sockets[username]:
-                try: await socket.send_json(payload)
-                except: pass
-
-    async def registerWSockConnection(self, socket):
+    async def listenSocket(self, socket):
         await socket.accept()
-        try: key, value = await socket.receive_json()
+        try: key, token = await socket.receive_json()
         except: await socket.close()
         else:
             if key == 'auth':
                 try:
-                    org = value['org']
-                    token = value['token']
-                    authInfo = await self.checkAuthInfo(org, token)
+                    authInfo = await self.checkBearerToken(token)
                     username = authInfo.username
+                    if username not in self.userSockets: self.userSockets[username] = []
+                    self.userSockets[username].append(socket)
+                    for group in authInfo.groups:
+                        if group not in self.groupSockets: self.groupSockets[group] = []
+                        self.groupSockets[group].append(socket)
+                    await socket.send_json(['status', 'connected'])
                 except:
-                    traceback.print_exc()
-                    await socket.close()
+                    try: self.userSockets.remove(socket)
+                    except: pass
+                    for group in authInfo.groups:
+                        try: self.groupSockets[group].remove(socket)
+                        except: pass
+                    try: await socket.close()
+                    except: pass
                 else:
-                    if username not in self.sockets: self.sockets[username] = []
-                    self.sockets[username].append(socket)
                     while True:
-                        try: await self.parseWSockData(org, token, authInfo, await socket.receive_json())
+                        try:
+                            key, val = await socket.receive_json()
+                            await self.socketHandler(socket, authInfo, key, val)
                         except WebSocketDisconnect:
-                            self.sockets[username].remove(socket)
+                            try: self.userSockets.remove(socket)
+                            except: pass
+                            for group in authInfo.groups:
+                                try: self.groupSockets[group].remove(socket)
+                                except: pass
                             break
-                        except: traceback.print_exc()
+                        except Exception as e:
+                            if LOG.isDebugMode():
+                                LOG.DEBUG(e)
+                                LOG.DEBUG(traceback.extract_stack()[:-1])
             else: await socket.close()
 
-    async def parseWSockData(self, org, token, authInfo, data):
-        key, value = data
-        await self.sendWSockData(authInfo.username, self.createWSockPayload(key, value))
+    async def socketHandler(self, socket, authInfo, key, val):
+        socket.send_json([key, val])

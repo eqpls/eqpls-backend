@@ -4,6 +4,8 @@ Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
@@ -14,8 +16,7 @@ from pydantic import BaseModel
 from stringcase import snakecase
 from psycopg import AsyncConnection
 from luqum.tree import Item, Term, SearchField, Group, FieldGroup, Range, From, To, AndOperation, OrOperation, Not, UnknownOperation
-
-from common import asleep, runBackground, EpException, BaseSchema, Search, ModelDriverBase
+from common import asleep, runBackground, EpException, Search, ModelDriverBase, SchemaInfo
 
 
 #===============================================================================
@@ -23,43 +24,39 @@ from common import asleep, runBackground, EpException, BaseSchema, Search, Model
 #===============================================================================
 class PostgreSql(ModelDriverBase):
 
-    def __init__(self, config):
-        ModelDriverBase.__init__(self, config)
-
-        self._psqlUsername = config['default']['system_access_key']
-        self._psqlPassword = config['default']['system_secret_key']
-
-        self._psqlHostname = config['postgresql']['hostname']
-        self._psqlHostport = int(config['postgresql']['hostport'])
-        self._psqlDatabase = config['postgresql']['database']
-
-        self._psql = None
-        self._psqlConnMutex = False
+    def __init__(self, control):
+        ModelDriverBase.__init__(self, control)
+        psqlConf = self.control.config['postgresql']
+        self.psqlHostname = psqlConf['hostname']
+        self.psqlHostport = int(psqlConf['hostport'])
+        self.psqlDatabase = psqlConf['database']
+        self.psqlConn = None
+        self.psqlConnectionRestoreMutex = False
 
     async def connect(self, *args, **kargs):
-        if not self._psql:
-            self._psql = await AsyncConnection.connect(
-                host=self._psqlHostname,
-                port=self._psqlHostport,
-                dbname=self._psqlDatabase,
-                user=self._psqlUsername,
-                password=self._psqlPassword
+        if not self.psqlConn:
+            self.psqlConn = await AsyncConnection.connect(
+                host=self.psqlHostname,
+                port=self.psqlHostport,
+                dbname=self.psqlDatabase,
+                user=self.control.systemAccessKey,
+                password=self.control.systemSecretKey
             )
         return self
 
     async def disconnect(self):
-        if self._psql:
-            try: await self._psql.close()
+        if self.psqlConn:
+            try: await self.psqlConn.close()
             except: pass
-            self._psql = None
-        if self._psql:
-            try: await self._psql.close()
+            self.psqlConn = None
+        if self.psqlConn:
+            try: await self.psqlConn.close()
             except: pass
-            self._psql = None
+            self.psqlConn = None
 
     async def reconnect(self):
-        if not self._psqlConnMutex:
-            self._psqlConnMutex = True
+        if not self.psqlConnectionRestoreMutex:
+            self.psqlConnectionRestoreMutex = True
             await runBackground(self.__restore_background__())
 
     async def __restore_background__(self):
@@ -69,7 +66,7 @@ class PostgreSql(ModelDriverBase):
             try: await self.connect()
             except: continue
             break
-        self._psqlConnMutex = False
+        self.psqlConnectionRestoreMutex = False
 
     def __parseLuceneToTsquery__(self, node:Item):
         nodeType = type(node)
@@ -148,8 +145,8 @@ class PostgreSql(ModelDriverBase):
 
     def __data_loader__(self, d): return d
 
-    async def registerModel(self, schema:BaseSchema, *args, **kargs):
-        info = schema.getSchemaInfo()
+    async def registerModel(self, schemaInfo:SchemaInfo, *args, **kargs):
+        schema = schemaInfo.ref
         fields = sorted(schema.model_fields.keys())
         snakes = [snakecase(field) for field in fields]
 
@@ -204,23 +201,21 @@ class PostgreSql(ModelDriverBase):
             else: raise EpException(500, f'database.registerModel({schema}.{field}{fieldType}): could not parse schema')
             index += 1
 
-        info.database['fields'] = fields
-        info.database['snakes'] = snakes
-        info.database['dumpers'] = dumpers
-        info.database['loaders'] = loaders
-        info.database['indices'] = indices
+        schemaInfo.database['fields'] = fields
+        schemaInfo.database['snakes'] = snakes
+        schemaInfo.database['dumpers'] = dumpers
+        schemaInfo.database['loaders'] = loaders
+        schemaInfo.database['indices'] = indices
 
         try: await self.connect()
         except: exit(1)
-        async with self._psql.cursor() as cursor:
-            await cursor.execute(f"CREATE TABLE IF NOT EXISTS {info.dref} ({','.join(columns)});")
-            await self._psql.commit()
+        async with self.psqlConn.cursor() as cursor:
+            await cursor.execute(f"CREATE TABLE IF NOT EXISTS {schemaInfo.dref} ({','.join(columns)});")
+            await self.psqlConn.commit()
 
-    async def read(self, schema:BaseSchema, id:str):
-        info = schema.getSchemaInfo()
-
-        query = f"SELECT * FROM {info.dref} WHERE id='{id}' AND deleted=FALSE LIMIT 1;"
-        cursor = self._psql.cursor()
+    async def read(self, schemaInfo:SchemaInfo, id:str):
+        query = f"SELECT * FROM {schemaInfo.dref} WHERE id='{id}' AND deleted=FALSE LIMIT 1;"
+        cursor = self.psqlConn.cursor()
         try:
             await cursor.execute(query)
             record = await cursor.fetchone()
@@ -231,8 +226,8 @@ class PostgreSql(ModelDriverBase):
         await cursor.close()
 
         if record:
-            fields = info.database['fields']
-            loaders = info.database['loaders']
+            fields = schemaInfo.database['fields']
+            loaders = schemaInfo.database['loaders']
             index = 0
             model = {}
             for column in record:
@@ -241,14 +236,9 @@ class PostgreSql(ModelDriverBase):
             return model
         return None
 
-    async def search(self, schema:BaseSchema, search:Search):
-        info = schema.getSchemaInfo()
+    async def search(self, schemaInfo:SchemaInfo, search:Search):
         unique = False
 
-        if search.fields:
-            termFields = [field.split('.')[0] for field in search.fields]
-            columns = ','.join([snakecase(field) for field in termFields])
-        else: columns = '*'
         if search.filter:
             filter = self.__parseLuceneToTsquery__(search.filter)
             if filter: filter = [filter]
@@ -261,9 +251,9 @@ class PostgreSql(ModelDriverBase):
             if search.size == 1: unique = True
             condition = f'{condition} LIMIT {search.size}'
         if search.skip: condition = f'{condition} OFFSET {search.skip}'
-        query = f'SELECT {columns} FROM {info.dref} WHERE deleted=FALSE{condition};'
+        query = f'SELECT * FROM {schemaInfo.dref} WHERE deleted=FALSE{condition};'
 
-        cursor = self._psql.cursor()
+        cursor = self.psqlConn.cursor()
         try:
             await cursor.execute(query)
             if unique:
@@ -277,31 +267,19 @@ class PostgreSql(ModelDriverBase):
             raise e
         await cursor.close()
 
-        fields = info.database['fields']
-        loaders = info.database['loaders']
+        fields = schemaInfo.database['fields']
+        loaders = schemaInfo.database['loaders']
         models = []
-        if search.fields:
-            indices = info.database['indices']
-            for record in records:
-                index = 0
-                model = {}
-                for column in record:
-                    fieldIndex = indices[termFields[index]]
-                    model[fields[fieldIndex]] = loaders[fieldIndex](column)
-                    index += 1
-                models.append(model)
-        else:
-            for record in records:
-                index = 0
-                model = {}
-                for column in record:
-                    model[fields[index]] = loaders[index](column)
-                    index += 1
-                models.append(model)
+        for record in records:
+            index = 0
+            model = {}
+            for column in record:
+                model[fields[index]] = loaders[index](column)
+                index += 1
+            models.append(model)
         return models
 
-    async def count(self, schema:BaseSchema, search:Search):
-        info = schema.getSchemaInfo()
+    async def count(self, schemaInfo:SchemaInfo, search:Search):
 
         if search.filter:
             filter = self.__parseLuceneToTsquery__(search.filter)
@@ -310,9 +288,9 @@ class PostgreSql(ModelDriverBase):
         else: filter = []
         condition = ' AND '.join(filter)
         if condition: condition = f' AND {condition}'
-        query = f'SELECT COUNT(*) FROM {info.dref} WHERE deleted=FALSE{condition};'
+        query = f'SELECT COUNT(*) FROM {schemaInfo.dref} WHERE deleted=FALSE{condition};'
 
-        cursor = self._psql.cursor()
+        cursor = self.psqlConn.cursor()
         try:
             await cursor.execute(query)
             count = await cursor.fetchone()
@@ -323,12 +301,11 @@ class PostgreSql(ModelDriverBase):
         await cursor.close()
         return count[0]
 
-    async def create(self, schema:BaseSchema, *models):
+    async def create(self, schemaInfo:SchemaInfo, *models):
         if models:
-            info = schema.getSchemaInfo()
-            fields = info.database['fields']
-            dumpers = info.database['dumpers']
-            cursor = self._psql.cursor()
+            fields = schemaInfo.database['fields']
+            dumpers = schemaInfo.database['dumpers']
+            cursor = self.psqlConn.cursor()
             try:
                 for model in models:
                     index = 0
@@ -336,11 +313,11 @@ class PostgreSql(ModelDriverBase):
                     for field in fields:
                         values.append(dumpers[index](model[field]))
                         index += 1
-                    query = f"INSERT INTO {info.dref} VALUES({','.join(values)});"
+                    query = f"INSERT INTO {schemaInfo.dref} VALUES({','.join(values)});"
                     await cursor.execute(query)
-                    await cursor.execute(f"SELECT COUNT(*) FROM {info.dref} WHERE id='{model['id']}';")
+                    await cursor.execute(f"SELECT COUNT(*) FROM {schemaInfo.dref} WHERE id='{model['id']}';")
                 results = [bool(result) for result in await cursor.fetchall()]
-                await self._psql.commit()
+                await self.psqlConn.commit()
             except Exception as e:
                 await cursor.close()
                 await self.reconnect()
@@ -349,13 +326,12 @@ class PostgreSql(ModelDriverBase):
             return results
         return []
 
-    async def update(self, schema:BaseSchema, *models):
+    async def update(self, schemaInfo:SchemaInfo, *models):
         if models:
-            info = schema.getSchemaInfo()
-            fields = info.database['fields']
-            snakes = info.database['snakes']
-            dumpers = info.database['dumpers']
-            cursor = self._psql.cursor()
+            fields = schemaInfo.database['fields']
+            snakes = schemaInfo.database['snakes']
+            dumpers = schemaInfo.database['dumpers']
+            cursor = self.psqlConn.cursor()
             try:
                 for model in models:
                     id = model['id']
@@ -365,11 +341,11 @@ class PostgreSql(ModelDriverBase):
                         value = dumpers[index](model[field])
                         values.append(f'{snakes[index]}={value}')
                         index += 1
-                    query = f"UPDATE {info.dref} SET {','.join(values)} WHERE id='{id}' AND deleted=FALSE;"
+                    query = f"UPDATE {schemaInfo.dref} SET {','.join(values)} WHERE id='{id}' AND deleted=FALSE;"
                     await cursor.execute(query)
-                    await cursor.execute(f"SELECT COUNT(*) FROM {info.dref} WHERE id='{id}' AND deleted=FALSE;")
+                    await cursor.execute(f"SELECT COUNT(*) FROM {schemaInfo.dref} WHERE id='{id}' AND deleted=FALSE;")
                 results = [bool(result) for result in await cursor.fetchall()]
-                await self._psql.commit()
+                await self.psqlConn.commit()
             except Exception as e:
                 await cursor.close()
                 await self.reconnect()
@@ -378,15 +354,14 @@ class PostgreSql(ModelDriverBase):
             return results
         return []
 
-    async def delete(self, schema:BaseSchema, id:str):
-        info = schema.getSchemaInfo()
-        query = f"DELETE FROM {info.dref} WHERE id='{id}';"
-        cursor = self._psql.cursor()
+    async def delete(self, schemaInfo:SchemaInfo, id:str):
+        query = f"DELETE FROM {schemaInfo.dref} WHERE id='{id}';"
+        cursor = self.psqlConn.cursor()
         try:
             await cursor.execute(query)
-            await cursor.execute(f"SELECT COUNT(*) FROM {info.dref} WHERE id='{id}';")
+            await cursor.execute(f"SELECT COUNT(*) FROM {schemaInfo.dref} WHERE id='{id}';")
             result = [bool(not result[0]) for result in await cursor.fetchall()][0]
-            await self._psql.commit()
+            await self.psqlConn.commit()
         except Exception as e:
             await cursor.close()
             await self.reconnect()

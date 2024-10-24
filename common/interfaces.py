@@ -4,17 +4,17 @@ Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
 import urllib3
 import aiohttp
 import requests
-
 from json import loads
 from fastapi import Request
 from aiohttp.client_exceptions import ClientResponseError
-
 from .exceptions import EpException
 
 #===============================================================================
@@ -28,15 +28,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 #===============================================================================
 class SyncRest:
 
-    def __init__(self, baseUrl=''):
-        self.baseUrl = baseUrl
+    def __init__(self, baseUrl=''): self.baseUrl = baseUrl
 
     def __enter__(self):
         self.session = requests.Session()
         return self
 
-    def __exit__(self, *args):
-        self.session.close()
+    def __exit__(self, *args): self.session.close()
 
     def get(self, url, headers=None):
         res = self.session.get(f'{self.baseUrl}{url}', headers=headers, verify=False)
@@ -71,15 +69,13 @@ class SyncRest:
 
 class AsyncRest:
 
-    def __init__(self, baseUrl=''):
-        self.baseUrl = baseUrl
+    def __init__(self, baseUrl=''): self.baseUrl = baseUrl
 
     async def __aenter__(self):
         self.session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True)
         return self
 
-    async def __aexit__(self, *args):
-        await self.session.close()
+    async def __aexit__(self, *args): await self.session.close()
 
     async def proxy(self, request:Request):
         method = request.scope['method']
@@ -89,8 +85,7 @@ class AsyncRest:
         try:
             if method in ['GET', 'DELETE']: return await _method(url)
             if method in ['POST', 'PUT', 'PATCH']: return await _method(url, json=(await request.json()))
-        except ClientResponseError as e:
-            raise EpException(e.status, e.message)
+        except ClientResponseError as e: raise EpException(e.status, e.message)
 
     async def get(self, url, headers=None):
         try:
@@ -98,8 +93,7 @@ class AsyncRest:
                 data = await res.text()
                 try: return loads(data)
                 except: return data
-        except ClientResponseError as e:
-            raise EpException(e.status, e.message)
+        except ClientResponseError as e: raise EpException(e.status, e.message)
 
     async def post(self, url, data=None, json=None, headers=None):
         try:
@@ -107,8 +101,7 @@ class AsyncRest:
                 data = await res.text()
                 try: return loads(data)
                 except: return data
-        except ClientResponseError as e:
-            raise EpException(e.status, e.message)
+        except ClientResponseError as e: raise EpException(e.status, e.message)
 
     async def put(self, url, data=None, json=None, headers=None):
         try:
@@ -116,8 +109,7 @@ class AsyncRest:
                 data = await res.text()
                 try: return loads(data)
                 except: return data
-        except ClientResponseError as e:
-            raise EpException(e.status, e.message)
+        except ClientResponseError as e: raise EpException(e.status, e.message)
 
     async def patch(self, url, data=None, json=None, headers=None):
         try:
@@ -125,8 +117,7 @@ class AsyncRest:
                 data = await res.text()
                 try: return loads(data)
                 except: return data
-        except ClientResponseError as e:
-            raise EpException(e.status, e.message)
+        except ClientResponseError as e: raise EpException(e.status, e.message)
 
     async def delete(self, url, data=None, json=None, headers=None):
         try:
@@ -134,5 +125,4 @@ class AsyncRest:
                 data = await res.text()
                 try: return loads(data)
                 except: return data
-        except ClientResponseError as e:
-            raise EpException(e.status, e.message)
+        except ClientResponseError as e: raise EpException(e.status, e.message)

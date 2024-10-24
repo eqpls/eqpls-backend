@@ -9,12 +9,11 @@ Equal Plus
 #===============================================================================
 from common import UerpControl
 
-# from driver.auth_kc_redis import AuthKeyCloakRedis
-from driver.krm import KeycloakRedisMinio
-from driver.redis import RedisModel
+from driver.redis import RedisAccount, RedisModel, RedisQueue
 from driver.elasticsearch import ElasticSearch
 from driver.postgresql import PostgreSql
 
+from schema.data import GroupBucket, UserBucket
 from schema.secret.certification import Authority, Server
 from schema.secret.access import OpenSsh
 
@@ -28,13 +27,16 @@ class Control(UerpControl):
         UerpControl.__init__(
             self,
             path=path,
-            authDriver=KeycloakRedisMinio,
+            sessionCacheDriver=RedisAccount,
+            queueDriver=RedisQueue,
             cacheDriver=RedisModel,
             searchDriver=ElasticSearch,
             databaseDriver=PostgreSql
         )
 
     async def startup(self):
+        await self.registerModel(GroupBucket)
+        await self.registerModel(UserBucket)
         await self.registerModel(Authority)
         await self.registerModel(Server)
         await self.registerModel(OpenSsh)

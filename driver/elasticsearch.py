@@ -4,20 +4,19 @@ Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
 import inspect
 import datetime
-import traceback
-
 from uuid import UUID
 from time import time as tstamp
 from pydantic import BaseModel
 from elasticsearch import AsyncElasticsearch, helpers
 from luqum.elasticsearch import ElasticsearchQueryBuilder, SchemaAnalyzer
-
-from common import EpException, BaseSchema, Search, ModelDriverBase
+from common import EpException, Search, ModelDriverBase, SchemaInfo
 
 
 #===============================================================================
@@ -25,43 +24,41 @@ from common import EpException, BaseSchema, Search, ModelDriverBase
 #===============================================================================
 class ElasticSearch(ModelDriverBase):
 
-    def __init__(self, config):
-        ModelDriverBase.__init__(self, config)
-
-        self._esUsername = config['default']['system_access_key']
-        self._esPassword = config['default']['system_secret_key']
-
-        self._esHostname = config['elasticsearch']['hostname']
-        self._esHostport = int(config['elasticsearch']['hostport'])
-
-        self._esShards = int(config['elasticsearch']['shards'])
-        self._esReplicas = int(config['elasticsearch']['replicas'])
-        self._esExpire = int(config['elasticsearch']['expire'])
-
-        self._esConn = None
+    def __init__(self, control):
+        ModelDriverBase.__init__(self, control)
+        defConf = self.control.config['default']
+        esConf = self.control.config['elasticsearch']
+        self.esUsername = defConf['system_access_key']
+        self.esPassword = defConf['system_secret_key']
+        self.esHostname = esConf['hostname']
+        self.esHostport = int(esConf['hostport'])
+        self.esShards = int(esConf['shards'])
+        self.esReplicas = int(esConf['replicas'])
+        self.esExpire = int(esConf['expire'])
+        self.esConn = None
 
     async def connect(self, *args, **kargs):
-        if not self._esConn:
-            self._esConn = AsyncElasticsearch(
-                f'https://{self._esHostname}:{self._esHostport}',
-                basic_auth=(self._esUsername, self._esPassword),
+        if not self.esConn:
+            self.esConn = AsyncElasticsearch(
+                f'https://{self.esHostname}:{self.esHostport}',
+                basic_auth=(self.esUsername, self.esPassword),
                 verify_certs=False,
                 ssl_show_warn=False
             )
         return self
 
     async def disconnect(self):
-        if self._esConn:
-            try: await self._esConn.close()
+        if self.esConn:
+            try: await self.esConn.close()
             except: pass
-            self._esConn = None
+            self.esConn = None
 
-    async def registerModel(self, schema:BaseSchema, *args, **kargs):
-        info = schema.getSchemaInfo()
+    async def registerModel(self, schemaInfo:SchemaInfo, *args, **kargs):
+        schema = schemaInfo.ref
 
-        if 'shards' not in info.search or not info.search['shards']: info.search['shards'] = self._esShards
-        if 'replicas' not in info.search or not info.search['replicas']: info.search['replicas'] = self._esReplicas
-        if 'expire' not in info.search or not info.search['expire']: info.search['expire'] = self._esExpire
+        if 'shards' not in schemaInfo.search or not schemaInfo.search['shards']: schemaInfo.search['shards'] = self.esShards
+        if 'replicas' not in schemaInfo.search or not schemaInfo.search['replicas']: schemaInfo.search['replicas'] = self.esReplicas
+        if 'expire' not in schemaInfo.search or not schemaInfo.search['expire']: schemaInfo.search['expire'] = self.esExpire
 
         def parseModelToMapping(schema):
 
@@ -107,67 +104,59 @@ class ElasticSearch(ModelDriverBase):
         mapping['_expireAt'] = {'type': 'long'}
         indexSchema = {
             'settings': {
-                'number_of_shards': info.search['shards'],
-                'number_of_replicas': info.search['replicas']
+                'number_of_shards': schemaInfo.search['shards'],
+                'number_of_replicas': schemaInfo.search['replicas']
             },
             'mappings': {
                 'properties': mapping
             }
         }
-        if not await self._esConn.indices.exists(index=info.dref): await self._esConn.indices.create(index=info.dref, body=indexSchema)
-        info.search['filter'] = ElasticsearchQueryBuilder(**SchemaAnalyzer(indexSchema).query_builder_options())
+        if not await self.esConn.indices.exists(index=schemaInfo.dref): await self.esConn.indices.create(index=schemaInfo.dref, body=indexSchema)
+        schemaInfo.search['filter'] = ElasticsearchQueryBuilder(**SchemaAnalyzer(indexSchema).query_builder_options())
 
-    async def read(self, schema:BaseSchema, id:str):
-        try: model = (await self._esConn.get(index=schema.getSchemaInfo().dref, id=id, source_excludes=['_expireAt'])).body['_source']
+    async def read(self, schemaInfo:SchemaInfo, id:str):
+        try: model = (await self.esConn.get(index=schemaInfo.dref, id=id, source_excludes=['_expireAt'])).body['_source']
         except: model = None
         return model
 
-    async def search(self, schema:BaseSchema, search:Search):
-        info = schema.getSchemaInfo()
-        if search.filter: filter = info.search['filter'](search.filter)
+    async def search(self, schemaInfo:SchemaInfo, search:Search):
+        if search.filter: filter = schemaInfo.search['filter'](search.filter)
         else: filter = {'match_all': {}}
         if search.orderBy and search.order: sort = [{search.orderBy: search.order}]
         else: sort = None
-
-        models = await self._esConn.search(index=info.dref, source_includes=search.fields, source_excludes=['_expireAt'], query=filter, sort=sort, from_=search.skip, size=search.size)
+        models = await self.esConn.search(index=schemaInfo.dref, source_excludes=['_expireAt'], query=filter, sort=sort, from_=search.skip, size=search.size)
         return [model['_source'] for model in models['hits']['hits']]
 
-    async def count(self, schema:BaseSchema, search:Search):
-        info = schema.getSchemaInfo()
-        if search.filter: filter = info.search['filter'](search.filter)
+    async def count(self, schemaInfo:SchemaInfo, search:Search):
+        if search.filter: filter = schemaInfo.search['filter'](search.filter)
         else: filter = {'match_all': {}}
-        return (await self._esConn.count(index=info.dref, query=filter))['count']
+        return (await self.esConn.count(index=schemaInfo.dref, query=filter))['count']
 
     def __set_search_expire__(self, model, expire):
         model['_expireAt'] = expire
         return model
 
-    async def __generate_bulk_data__(self, schema:BaseSchema, models):
-        info = schema.getSchemaInfo()
-        expire = int(tstamp()) + info.search['expire']
+    async def __generate_bulk_data__(self, schemaInfo:SchemaInfo, models):
+        expire = int(tstamp()) + schemaInfo.search['expire']
         for model in models:
             yield {
                 '_op_type': 'update',
-                '_index': info.dref,
+                '_index': schemaInfo.dref,
                 '_id': model['id'],
                 'doc': self.__set_search_expire__(model, expire),
                 'doc_as_upsert': True
             }
 
-    async def create(self, schema:BaseSchema, *models):
+    async def create(self, schemaInfo:SchemaInfo, *models):
         if models:
-            try: await helpers.async_bulk(self._esConn, self.__generate_bulk_data__(schema, models))
-            except helpers.BulkIndexError as e:
-                LOG.ERROR(e)
-                traceback.print_exc()
-                await self.create(schema, *models)
+            try: await helpers.async_bulk(self.esConn, self.__generate_bulk_data__(schemaInfo, models))
+            except helpers.BulkIndexError as e: await self.create(schemaInfo, *models)
             except Exception as e: raise e
 
-    async def update(self, schema:BaseSchema, *models):
+    async def update(self, schemaInfo:SchemaInfo, *models):
         if models:
-            try: await helpers.async_bulk(self._esConn, self.__generate_bulk_data__(schema, models))
-            except helpers.BulkIndexError as e: await self.update(schema, *models)
+            try: await helpers.async_bulk(self.esConn, self.__generate_bulk_data__(schemaInfo, models))
+            except helpers.BulkIndexError as e: await self.update(schemaInfo, *models)
             except Exception as e: raise e
 
-    async def delete(self, schema:BaseSchema, id:str):
-        await self._esConn.delete(index=schema.getSchemaInfo().dref, id=id)
+    async def delete(self, schemaInfo:SchemaInfo, id:str): await self.esConn.delete(index=schemaInfo.dref, id=id)

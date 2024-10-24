@@ -18,12 +18,10 @@ try:
     modPath = os.path.dirname(os.path.abspath(__file__))
     prjPath = os.path.dirname(modPath)
     module = os.path.basename(modPath)
-
     config = configparser.ConfigParser()
     config.read(f'{prjPath}/project.ini', encoding='utf-8')
-
     hostport = config[module]['hostport']
-    res = requests.get(f'http://localhost:{hostport}/module/health')
+    res = requests.get(f'http://localhost:{hostport}/internal/health')
     res.raise_for_status()
     result = res.json()
     if not result['healthy']: raise Exception()
