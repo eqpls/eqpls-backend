@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
@@ -9,7 +9,7 @@ except: pass
 #===============================================================================
 # Import
 #===============================================================================
-from common import mergeArray, runBackground, asleep, EpException, BaseControl, AuthInfo
+from common import mergeArray, runBackground, asleep, BaseControl, AuthInfo
 from driver.keyclock import KeyCloak
 from driver.redis import RedisAccount
 from driver.minio import Minio
@@ -25,34 +25,22 @@ class Control(BaseControl):
         self.keycloak = KeyCloak(self)
         self.redis = RedisAccount(self)
         self.minio = Minio(self)
+        self.accountDefaultAcl = self.config[f'{self.module}:acl']
+        self.accountRestrict = self.config[f'{self.module}:restrict']
+        self.accountRestrictGroupCodes = [code.strip() for code in self.accountRestrict['group_codes'].split(',')]
 
     async def startup(self):
-        await self.keycloak.connect()
-        await self.redis.connect()
-        await self.minio.connect()
-        try: await self.keycloak.readRealm(self.tenant)
-        except EpException as e:
-            if e.status_code != 404: raise e
-            await self.keycloak.createRealm(self.tenant, self.title)
-            await self.minio.updatePolicy(self.adminRoleName, '*/*')
-            await self.minio.updatePolicyDetail(
-                self.userRoleName,
-                [{
-                    'Effect': 'Allow',
-                    'Action': ['s3:*'],
-                    'Resource': [
-                        'arn:aws:s3:::g.user.*/*',
-                        'arn:aws:s3:::u.${jwt:preferred_username}.*/*'
-                    ]
-                }]
-            )
-            await self.minio.post('/api/v1/idp/openid', {
-                'name': self.tenant,
-                'input': f'config_url=http://{self.keycloak.kcHostname}:{self.keycloak.kcHostport}/auth/realms/{self.tenant}/.well-known/openid-configuration client_id=minio client_secret={await self.keycloak.getClientSecret(self.tenant, "minio")} claim_name=groups display_name={self.title} scopes=openid redirect_uri=https://{self.endpoint}/minio/oauth/callback '
-            })
-            try: await self.minio.post('/api/v1/service/restart', {})
-            except Exception as e: LOG.DEBUG(e)
-        except Exception as e: raise e
+        await self.redis.initialize()
+        await self.keycloak.initialize(
+            defaultAcl=self.accountDefaultAcl
+        )
+        await self.minio.initialize(
+            keycloak={
+                'hostname': self.keycloak.kcHostname,
+                'hostport': self.keycloak.kcHostport,
+                'clientSecret': await self.keycloak.getClientSecret(self.tenant, 'minio')
+            }
+        )
         self.userGroupId = (await self.keycloak.readGroupByName(self.tenant, self.userGroupName))['id']
         await runBackground(self.__syncSystemToken__())
 

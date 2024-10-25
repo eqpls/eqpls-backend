@@ -1,12 +1,12 @@
 window.Module = window.Module || {};
 window.Module.Term = window.Module.Term || {
 	init: () => {
-		window.Module.Term.isAutoLogin = false;
+		Module.Term.isAutoLogin = false;
 		console.log("(Module.Term) start");
-		window.Module.Term.requests = [];
+		Module.Term.requests = [];
 
 		// called from main index
-		window.Module.Term.openSSH = (username, hostname, hostport, target, options) => {
+		Module.Term.openSSH = (username, hostname, hostport, target, options) => {
 			if (!username) { throw "(module.term.openSSH) username parameter is required"; }
 			if (!hostname) { throw "(module.term.openSSH) hostname parameter is required"; }
 			hostport = hostport ? hostport : 22;
@@ -23,12 +23,12 @@ window.Module.Term = window.Module.Term || {
 		};
 
 		// called from term index
-		window.Module.Term.connect = (dom) => {
+		Module.Term.connect = (dom) => {
 			let token = Common.Session.Cookie.get("Guac-Token");
 			let connection = Common.Session.Cookie.get("Guac-Req");
 			if (connection) { connection = JSON.parse(connection); }
 			else {
-				window.Module.Term.closeByException("연결 요청 정보가 없습니다");
+				Module.Term.closeByException("연결 요청 정보가 없습니다");
 				throw "(module.term.connect) could not find connection info";
 			}
 
@@ -47,10 +47,10 @@ window.Module.Term = window.Module.Term || {
 								if (res.ok) { return res.json(); }
 								throw res;
 							}).then((data) => {
-								window.Module.Term.connectToSSH(dom, data.identifier, token);
+								Module.Term.connectToSSH(dom, data.identifier, token);
 							});
 						} else {
-							window.Module.Term.closeByException("지원하지 않는 연결 형식 입니다");
+							Module.Term.closeByException("지원하지 않는 연결 형식 입니다");
 							throw "(module.term.connect) could not support connection type";
 						}
 					} else {
@@ -84,10 +84,10 @@ window.Module.Term = window.Module.Term || {
 								if (res.ok) { return res.json(); }
 								throw res;
 							}).then((data) => {
-								window.Module.Term.connectToSSH(dom, data.identifier, token);
+								Module.Term.connectToSSH(dom, data.identifier, token);
 							});
 						} else {
-							window.Module.Term.closeByException("지원하지 않는 연결 형식 입니다");
+							Module.Term.closeByException("지원하지 않는 연결 형식 입니다");
 							throw "(module.term.connect) could not support connection type";
 						}
 					});
@@ -97,7 +97,7 @@ window.Module.Term = window.Module.Term || {
 			}
 		};
 
-		window.Module.Term.connectToSSH = (dom, id, token) => {
+		Module.Term.connectToSSH = (dom, id, token) => {
 			let guac = new Guacamole.Client(new Guacamole.WebSocketTunnel('/guacamole/websocket-tunnel'));
 			let guacDisp = guac.getDisplay().getElement();
 			dom.appendChild(guacDisp);
@@ -109,7 +109,7 @@ window.Module.Term = window.Module.Term || {
 			guac.connect(options);
 			guac.onerror = (error) => {
 				console.error(error);
-				window.Module.Term.closeByException("문제가 발생하여 연결하지 못했습니다");
+				Module.Term.closeByException("문제가 발생하여 연결하지 못했습니다");
 			};
 			guac.onstatechange = (state) => {
 				switch (state) {
@@ -146,7 +146,7 @@ window.Module.Term = window.Module.Term || {
 			guacKbd.onkeyup = (k) => guac.sendKeyEvent(0, k);
 		};
 
-		window.Module.Term.closeByException = (message) => {
+		Module.Term.closeByException = (message) => {
 			window.alert(message);
 			window.close();
 		};

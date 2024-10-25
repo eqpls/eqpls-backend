@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
@@ -11,6 +13,7 @@ import os
 import sys
 import uvicorn
 import configparser
+
 
 #===============================================================================
 # Implement

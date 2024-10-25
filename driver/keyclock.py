@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Created on 2024. 2. 8.
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
@@ -20,8 +20,7 @@ class KeyCloak(DriverBase):
     def __init__(self, control):
         DriverBase.__init__(self, control)
         kcConf = self.control.config['keycloak']
-        self.aclAttr = {}
-        for sref, crud in self.control.config['keycloak:acl'].items(): self.aclAttr[sref] = [crud]
+        self.kcDefaultAcl = {}
         self.kcEndpointUrl = f'https://{self.control.endpoint}'
         self.kcHostname = kcConf['hostname']
         self.kcHostport = int(kcConf['hostport'])
@@ -34,12 +33,32 @@ class KeyCloak(DriverBase):
         self.kcAccessToken = None
         self.kcRefreshToken = None
 
+    async def initialize(self, *args, **kargs):
+        if 'defaultAcl' in kargs:
+            for sref, crud in kargs['defaultAcl'].items(): self.kcDefaultAcl[sref] = [crud]
+        await self.connect()
+        try: await self.readRealm(self.control.tenant)
+        except EpException as e:
+            if e.status_code != 404: raise e
+            for client in await self.get('/admin/realms/master/clients'):
+                if client['clientId'] == 'admin-cli':
+                    client['attributes']['access.token.lifespan'] = SECONDS.YEAR
+                    client['attributes']['client.session.max.lifespan'] = SECONDS.YEAR
+                    client['attributes']['client.session.idle.timeout'] = SECONDS.YEAR
+                    await self.put(f'/admin/realms/master/clients/{client["id"]}', client)
+                    await self.connect()
+                    break
+            else: raise EpException(500, 'Internal Server Error')
+            await self.connect()
+            await self.createRealm(self.control.tenant, self.control.title)
+        except Exception as e: raise e
+
     async def connect(self, *args, **kargs):
         if self.kcRefreshToken:
             try: tokens = await self.loginByRefreshToken('master', 'admin-cli', self.kcRefreshToken)
             except:
-                self.kcRefreshToken = None
-                return self.connect()
+                await self.disconnect()
+                return await self.connect()
         else: tokens = await self.login('master', 'admin-cli', self.control.systemAccessKey, self.control.systemSecretKey)
         self.kcAccessToken = tokens['access_token']
         self.kcRefreshToken = tokens['refresh_token']
@@ -138,16 +157,6 @@ class KeyCloak(DriverBase):
 
     async def createRealm(self, realmId:str, displayName:str):
         if realmId == 'master': raise EpException(400, 'Bad Request')
-
-        for client in await self.get('/admin/realms/master/clients'):
-            if client['clientId'] == 'admin-cli':
-                client['attributes']['access.token.lifespan'] = SECONDS.YEAR
-                client['attributes']['client.session.max.lifespan'] = SECONDS.YEAR
-                client['attributes']['client.session.idle.timeout'] = SECONDS.YEAR
-                await self.put(f'/admin/realms/master/clients/{client["id"]}', client)
-                await self.connect()
-                break
-        else: raise EpException(404, 'Not Found')
 
         # create realm
         await self.post(f'/admin/realms', {
@@ -422,7 +431,7 @@ class KeyCloak(DriverBase):
         await self.post(f'/admin/realms/{realmId}/roles', {
             'name': name,
             'description': description,
-            'attributes': attributes if attributes else self.aclAttr
+            'attributes': attributes if attributes else self.kcDefaultAcl
         })
 
     async def updateRole(self, realmId:str, role:dict):

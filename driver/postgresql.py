@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
@@ -33,7 +33,10 @@ class PostgreSql(ModelDriverBase):
         self.psqlConn = None
         self.psqlConnectionRestoreMutex = False
 
+    async def initialize(self, *args, **kargs): await self.connect()
+
     async def connect(self, *args, **kargs):
+        await self.disconnect()
         if not self.psqlConn:
             self.psqlConn = await AsyncConnection.connect(
                 host=self.psqlHostname,
@@ -45,10 +48,6 @@ class PostgreSql(ModelDriverBase):
         return self
 
     async def disconnect(self):
-        if self.psqlConn:
-            try: await self.psqlConn.close()
-            except: pass
-            self.psqlConn = None
         if self.psqlConn:
             try: await self.psqlConn.close()
             except: pass

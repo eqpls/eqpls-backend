@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
@@ -24,14 +24,17 @@ class RedisAccount(KeyValueDriverBase):
     def __init__(self, control):
         KeyValueDriverBase.__init__(self, control)
         rdConf = self.control.config['redis']
-        sbConf = self.control.config['redis:account']
+        raConf = self.control.config['redis:account']
         self.raHostname = rdConf['hostname']
         self.raHostport = rdConf['hostport']
-        self.raDatabase = int(sbConf['database'])
-        self.raExpire = int(sbConf['expire'])
+        self.raDatabase = int(raConf['database'])
+        self.raExpire = int(raConf['expire'])
         self.raConn = None
 
+    async def initialize(self, *args, **kargs): await self.connect()
+
     async def connect(self, *args, **kargs):
+        await self.disconnect()
         if not self.raConn:
             self.raConn = await redis.Redis(
                 host=self.raHostname,
@@ -66,14 +69,17 @@ class RedisModel(ModelDriverBase):
     def __init__(self, control):
         ModelDriverBase.__init__(self, control)
         rdConf = self.control.config['redis']
-        sbConf = self.control.config['redis:model']
+        rmConf = self.control.config['redis:model']
         self.rmHostname = rdConf['hostname']
         self.rmHostport = rdConf['hostport']
-        self.rmDatabase = int(sbConf['database'])
-        self.rmExpire = int(sbConf['expire'])
+        self.rmDatabase = int(rmConf['database'])
+        self.rmExpire = int(rmConf['expire'])
         self.rmConn = None
 
+    async def initialize(self, *args, **kargs): await self.connect()
+
     async def connect(self, *args, **kargs):
+        await self.disconnect()
         if not self.rmConn:
             self.rmConn = await redis.Redis(
                 host=self.rmHostname,
@@ -119,16 +125,19 @@ class RedisQueue(DriverBase):
     def __init__(self, control):
         DriverBase.__init__(self, control)
         rdConf = self.control.config['redis']
-        sbConf = self.control.config['redis:queue']
+        rqConf = self.control.config['redis:queue']
         self.rqTenant = self.control.tenant
         self.rqPattern = f'{self.rqTenant}:*:*'
         self.rqHostname = rdConf['hostname']
         self.rqHostport = rdConf['hostport']
-        self.rqDatabase = int(sbConf['database'])
-        self.rqExpire = int(sbConf['expire'])
+        self.rqDatabase = int(rqConf['database'])
+        self.rqExpire = int(rqConf['expire'])
         self.rqConn = None
 
+    async def initialize(self, *args, **kargs): await self.connect()
+
     async def connect(self, *args, **kargs):
+        await self.disconnect()
         if not self.rqConn:
             self.rqConn = await redis.Redis(
                 host=self.rqHostname,

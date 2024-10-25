@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Created on 2024. 2. 8.
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
@@ -28,8 +28,37 @@ class Minio(DriverBase):
         self.minSession = AsyncRest(self.minBaseUrl)
         self.minSession.session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True)
 
+    async def initialize(self, *args, **kargs):
+        await self.connect()
+
+        if 'keycloak' in kargs:
+            keycloak = kargs['keycloak']
+            kcHostname = keycloak['hostname']
+            kcHostport = keycloak['hostport']
+            kcClientSecret = keycloak['clientSecret']
+            try: await self.readPolicy(self.control.adminRoleName)
+            except:
+                await self.updatePolicy(self.control.adminRoleName, '*/*')
+                await self.updatePolicyDetail(
+                    self.control.userRoleName,
+                    [{
+                        'Effect': 'Allow',
+                        'Action': ['s3:*'],
+                        'Resource': [
+                            'arn:aws:s3:::g.user.*/*',
+                            'arn:aws:s3:::u.${jwt:preferred_username}.*/*'
+                        ]
+                    }]
+                )
+                await self.post('/api/v1/idp/openid', {
+                    'name': self.control.tenant,
+                    'input': f'config_url=http://{kcHostname}:{kcHostport}/auth/realms/{self.control.tenant}/.well-known/openid-configuration client_id=minio client_secret={kcClientSecret} claim_name=groups display_name={self.control.title} scopes=openid redirect_uri=/minio/oauth/callback '
+                })
+                try: await self.post('/api/v1/service/restart', {})
+                except Exception as e: LOG.DEBUG(e)
+
     async def connect(self, *args, **kargs):
-        await self.minSession.session.close()
+        await self.disconnect()
         self.minSession.session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True)
         await self.minSession.post('/api/v1/login', json={
             'accessKey': self.control.systemAccessKey,
@@ -38,7 +67,9 @@ class Minio(DriverBase):
         return self
 
     async def disconnect(self):
-        await self.minSession.session.close()
+        try: await self.minSession.session.close()
+        except: pass
+        self.minSession.session = None
 
     #===========================================================================
     # Basic Rest Methods

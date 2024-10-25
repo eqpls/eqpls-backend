@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
@@ -37,7 +37,10 @@ class ElasticSearch(ModelDriverBase):
         self.esExpire = int(esConf['expire'])
         self.esConn = None
 
+    async def initialize(self, *args, **kargs): await self.connect()
+
     async def connect(self, *args, **kargs):
+        await self.disconnect()
         if not self.esConn:
             self.esConn = AsyncElasticsearch(
                 f'https://{self.esHostname}:{self.esHostport}',

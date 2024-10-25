@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
@@ -10,8 +10,6 @@ except: pass
 # Import
 #===============================================================================
 import os
-import json
-import aiohttp
 from typing import Annotated, Any, List, Literal
 from pydantic import BaseModel
 from stringcase import pathcase
@@ -54,6 +52,7 @@ class BaseControl:
         self.version = int(self.defConf['version'])
         self.uri = f'/{pathcase(self.module)}'
         self.uriver = f'{self.uri}/v{self.version}'
+        self.stage = self.defConf['stage']
 
         self.systemAccessKey = self.defConf['system_access_key']
         self.systemSecretKey = self.defConf['system_secret_key']
@@ -82,17 +81,18 @@ class BaseControl:
                 allow_headers=['*'],
             )
 
-        LOG.INFO(f'hostname = {self.hostname}')
-        LOG.INFO(f'hostport = {self.hostport}')
-        LOG.INFO(f'module   = {self.module}')
         LOG.INFO(f'title    = {self.title}')
         LOG.INFO(f'tenant   = {self.tenant}')
         LOG.INFO(f'domain   = {self.domain}')
-        LOG.INFO(f'endpoint = {self.endpoint}')
+        LOG.INFO(f'module   = {self.module}')
         LOG.INFO(f'version  = {self.version}')
+        LOG.INFO(f'endpoint = {self.endpoint}')
+        LOG.INFO(f'hostname = {self.hostname}')
+        LOG.INFO(f'hostport = {self.hostport}')
         LOG.INFO(f'uri      = {self.uri}')
+        LOG.INFO(f'api      = {self.uriver}')
         LOG.INFO(f'swagger  = {self.uri}/docs')
-        LOG.INFO(f'restful  = {self.uriver}')
+        LOG.INFO(f'openapi  = {self.uri}/openapi.json')
         LOG.INFO(f'prj path = {self.prjPath}')
         LOG.INFO(f'mod path = {self.modPath}')
         LOG.INFO(f'svc path = {self.svcPath}')
@@ -152,6 +152,10 @@ class SessionControl(BaseControl):
         if systemToken: return systemToken
         raise EpException(500, 'Internal Server Error')
 
+    async def getClientSecret(self, clientId:str) -> str:
+        systemToken = await self.getSystemToken()
+        async with AsyncRest(self.accountBaseUrl) as req: return await req.get(f'/client/{clientId}/secret', headers={'Authorization': f'Bearer {systemToken}'})
+
     async def checkBearerToken(self, bearerToken:str) -> AuthInfo:
         authInfo = await self.accountCache.read(bearerToken)
         if not authInfo:
@@ -181,7 +185,6 @@ class ModelControl(SessionControl):
 
     def __init__(self, path:str, cacheAccountDriver:Any):
         SessionControl.__init__(self, path, cacheAccountDriver)
-        self.modelSession = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True)
         self.schemaInfoList = []
         self.schemaInfoMap = {}
 
@@ -190,7 +193,6 @@ class ModelControl(SessionControl):
 
     async def __shutdown__(self):
         await SessionControl.__shutdown__(self)
-        await self.modelSession.close()
 
     async def registerModel(self, schema:BaseSchema, module:str, createHandler=None, updateHandler=None, deleteHandler=None):
         if module not in self.config: raise Exception(f'{module} is not in configuration')
@@ -256,12 +258,15 @@ class ModelControl(SessionControl):
     ):
         try:
             schemaInfo = self.schemaInfoMap[request.scope['path']]
+            authInfo = await self.checkCreatable(token, schemaInfo.sref)
+            model.owner = authInfo.username
             await schemaInfo.createHandler(model, token)
-            async with self.modelSession.post(
-                f"{schemaInfo.provider}{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
-                headers={'Authorization': f'Bearer {token.credentials}'},
-                json=model.model_dump()
-            ) as res: return json.loads(await res.text())
+            async with AsyncRest(schemaInfo.provider) as req:
+                return await req.post(
+                    f"{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
+                    headers={'Authorization': f'Bearer {token.credentials}'},
+                    json=model.model_dump()
+                )
         except ClientResponseError as e: raise EpException(e.status, e.message)
         except: raise EpException(500, 'Internal Server Error')
 
@@ -275,15 +280,17 @@ class ModelControl(SessionControl):
     ):
         try:
             schemaInfo = self.schemaInfoMap[request.scope['path']]
+            authInfo = await self.checkCreatable(token, schemaInfo.sref)
+            model.owner = authInfo.checkOnlyGroup(group)
             await schemaInfo.createHandler(model, token)
             query = f'?{request.scope["query_string"].decode("latin-1")}' if request.scope['query_string'] else ''
-            async with self.modelSession.post(
-                f'{schemaInfo.provider}{schemaInfo.path}{query}',
-                headers={'Authorization': f'Bearer {token.credentials}'},
-                json=model.model_dump()
-            ) as res: return json.loads(await res.text())
-        except ClientResponseError as e:
-            raise EpException(e.status, e.message)
+            async with AsyncRest(schemaInfo.provider) as req:
+                return await req.post(
+                    f'{schemaInfo.path}{query}',
+                    headers={'Authorization': f'Bearer {token.credentials}'},
+                    json=model.model_dump()
+                )
+        except ClientResponseError as e: raise EpException(e.status, e.message)
         except: raise EpException(500, 'Internal Server Error')
 
     async def createModelByAnony(
@@ -295,10 +302,11 @@ class ModelControl(SessionControl):
         try:
             schemaInfo = self.schemaInfoMap[request.scope['path']]
             await schemaInfo.createHandler(model)
-            async with self.modelSession.post(
-                f"{schemaInfo.provider}{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
-                json=model.model_dump()
-            ) as res: return json.loads(await res.text())
+            async with AsyncRest(schemaInfo.provider) as req:
+                return await req.post(
+                    f"{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
+                    json=model.model_dump()
+                )
         except ClientResponseError as e: raise EpException(e.status, e.message)
         except: raise EpException(500, 'Internal Server Error')
 
@@ -313,12 +321,14 @@ class ModelControl(SessionControl):
         id = str(id)
         try:
             schemaInfo = self.schemaInfoMap[request.scope['path'].replace(f'/{id}', '')]
-            await schemaInfo.updateHandler(model, token)
-            async with self.modelSession.put(
-                f"{schemaInfo.provider}{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
-                headers={'Authorization': f'Bearer {token.credentials}'},
-                json=model.model_dump()
-            ) as res: return json.loads(await res.text())
+            origin = await schemaInfo.ref.readModelByID(id, token)
+            await schemaInfo.updateHandler(model, origin, token)
+            async with AsyncRest(schemaInfo.provider) as req:
+                return await req.put(
+                    f"{origin.uref}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
+                    headers={'Authorization': f'Bearer {token.credentials}'},
+                    json=model.model_dump()
+                )
         except ClientResponseError as e: raise EpException(e.status, e.message)
         except: raise EpException(500, 'Internal Server Error')
 
@@ -332,11 +342,13 @@ class ModelControl(SessionControl):
         id = str(id)
         try:
             schemaInfo = self.schemaInfoMap[request.scope['path'].replace(f'/{id}', '')]
-            await schemaInfo.updateHandler(model)
-            async with self.modelSession.put(
-                f"{schemaInfo.provider}{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
-                json=model.model_dump()
-            ) as res: return json.loads(await res.text())
+            origin = await schemaInfo.ref.readModelByID(id)
+            await schemaInfo.updateHandler(model, origin)
+            async with AsyncRest(schemaInfo.provider) as req:
+                return await req.put(
+                    f"{origin.uref}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
+                    json=model.model_dump()
+                )
         except ClientResponseError as e: raise EpException(e.status, e.message)
         except: raise EpException(500, 'Internal Server Error')
 
@@ -351,12 +363,11 @@ class ModelControl(SessionControl):
         id = str(id)
         try:
             schemaInfo = self.schemaInfoMap[request.scope['path'].replace(f'/{id}', '')]
-            await schemaInfo.deleteHandler(await schemaInfo.ref.readModelByID(id, token), token)
+            model = await schemaInfo.ref.readModelByID(id, token)
+            await schemaInfo.deleteHandler(model, token)
             query = f'?{request.scope["query_string"].decode("latin-1")}' if request.scope['query_string'] else ''
-            async with self.modelSession.delete(
-                f'{schemaInfo.provider}{schemaInfo.path}{query}',
-                headers={'Authorization': f'Bearer {token.credentials}'}
-            ) as res: return json.loads(await res.text())
+            async with AsyncRest(schemaInfo.provider) as req:
+                return await req.delete(f'{model.uref}{query}', headers={'Authorization': f'Bearer {token.credentials}'})
         except ClientResponseError as e: raise EpException(e.status, e.message)
         except: raise EpException(500, 'Internal Server Error')
 
@@ -370,9 +381,11 @@ class ModelControl(SessionControl):
         id = str(id)
         try:
             schemaInfo = self.schemaInfoMap[request.scope['path'].replace(f'/{id}', '')]
-            await schemaInfo.deleteHandler(await schemaInfo.ref.readModelByID(id))
+            model = await schemaInfo.ref.readModelByID(id)
+            await schemaInfo.deleteHandler(model)
             query = f'?{request.scope["query_string"].decode("latin-1")}' if request.scope['query_string'] else ''
-            async with self.modelSession.put(f'{schemaInfo.provider}{schemaInfo.path}{query}') as res: return json.loads(await res.text())
+            async with AsyncRest(schemaInfo.provider) as req:
+                return await req.delete(f'{model.uref}{query}')
         except ClientResponseError as e: raise EpException(e.status, e.message)
         except: raise EpException(500, 'Internal Server Error')
 
@@ -400,10 +413,10 @@ class UerpControl(SessionControl):
         self.schemaInfoMap = {}
 
     async def __startup__(self):
-        await self.database.connect()
-        await self.search.connect()
-        await self.cache.connect()
-        await self.queue.connect()
+        await self.database.initialize()
+        await self.search.initialize()
+        await self.cache.initialize()
+        await self.queue.initialize()
         self.api.add_api_route(
             methods=['GET'],
             path=f'{self.uriver}/schema',
@@ -621,8 +634,8 @@ class UerpControl(SessionControl):
         filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
         orderBy:Annotated[str | None, Query(alias='$orderby', description='ordered by specific field')]=None,
         order:Annotated[Literal['asc', 'desc'], Query(alias='$order', description='ordering type')]=None,
-        size:Annotated[int | None, Query(alias='$size', description='retrieving model count')]=None,
-        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count')]=None,
+        size:Annotated[int | None, Query(alias='$size', description='retrieving model count default) 100')]=100,
+        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count default) 0')]=0,
         archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
     ):
         uref = request.scope['path']
@@ -639,8 +652,6 @@ class UerpControl(SessionControl):
         if '$skip' in query: query.pop('$skip')
         if '$archive' in query: query.pop('$archive')
         if orderBy and not order: order = 'desc'
-        if size: size = int(size)
-        if skip: skip = int(skip)
         query['owner'] = authInfo.username
         query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
         if filter: filter = f"{query} AND ({' AND '.join(filter)})"
@@ -660,8 +671,8 @@ class UerpControl(SessionControl):
         filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
         orderBy:Annotated[str | None, Query(alias='$orderby', description='ordered by specific field')]=None,
         order:Annotated[Literal['asc', 'desc'], Query(alias='$order', description='ordering type')]=None,
-        size:Annotated[int | None, Query(alias='$size', description='retrieving model count')]=None,
-        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count')]=None,
+        size:Annotated[int | None, Query(alias='$size', description='retrieving model count default) 100')]=100,
+        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count default) 0')]=0,
         archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
     ):
         uref = request.scope['path']
@@ -679,8 +690,6 @@ class UerpControl(SessionControl):
         if '$skip' in query: query.pop('$skip')
         if '$archive' in query: query.pop('$archive')
         if orderBy and not order: order = 'desc'
-        if size: size = int(size)
-        if skip: skip = int(skip)
         if authInfo.checkAdmin(): groups = ''
         elif not authInfo.groups: raise EpException(403, 'Forbidden')
         elif group: groups = ' OR '.join([f'owner:{authInfo.checkOnlyGroup(gid)}' for gid in group])
@@ -714,8 +723,8 @@ class UerpControl(SessionControl):
         filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
         orderBy:Annotated[str | None, Query(alias='$orderby', description='ordered by specific field')]=None,
         order:Annotated[Literal['asc', 'desc'], Query(alias='$order', description='ordering type')]=None,
-        size:Annotated[int | None, Query(alias='$size', description='retrieving model count')]=None,
-        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count')]=None,
+        size:Annotated[int | None, Query(alias='$size', description='retrieving model count default) 100')]=100,
+        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count default) 0')]=0,
         archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
     ):
         uref = request.scope['path']
@@ -732,8 +741,6 @@ class UerpControl(SessionControl):
         if '$skip' in query: query.pop('$skip')
         if '$archive' in query: query.pop('$archive')
         if orderBy and not order: order = 'desc'
-        if size: size = int(size)
-        if skip: skip = int(skip)
         query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
         if query:
             if filter: filter = f"({query}) AND ({' AND '.join(filter)})"
@@ -755,8 +762,8 @@ class UerpControl(SessionControl):
         filter:Annotated[List[str] | None, Query(alias='$filter', description='lucene type filter ex) $filter=field1:data1&$filter=field2:data2')]=None,
         orderBy:Annotated[str | None, Query(alias='$orderby', description='ordered by specific field')]=None,
         order:Annotated[Literal['asc', 'desc'], Query(alias='$order', description='ordering type')]=None,
-        size:Annotated[int | None, Query(alias='$size', description='retrieving model count')]=None,
-        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count')]=None,
+        size:Annotated[int | None, Query(alias='$size', description='retrieving model count default) 100')]=100,
+        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count default) 0')]=0,
         archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
     ):
         uref = request.scope['path']
@@ -772,8 +779,6 @@ class UerpControl(SessionControl):
         if '$skip' in query: query.pop('$skip')
         if '$archive' in query: query.pop('$archive')
         if orderBy and not order: order = 'desc'
-        if size: size = int(size)
-        if skip: skip = int(skip)
         query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
         if query:
             if filter: filter = f"({query}) AND ({' AND '.join(filter)})"
@@ -794,8 +799,8 @@ class UerpControl(SessionControl):
         filter:Annotated[str | None, Query(alias='$filter', description='lucene type filter ex) $filter=fieldName:yourSearchText')]=None,
         orderBy:Annotated[str | None, Query(alias='$orderby', description='ordered by specific field')]=None,
         order:Annotated[Literal['asc', 'desc'], Query(alias='$order', description='ordering type')]=None,
-        size:Annotated[int | None, Query(alias='$size', description='retrieving model count')]=None,
-        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count')]=None,
+        size:Annotated[int | None, Query(alias='$size', description='retrieving model count default) 100')]=100,
+        skip:Annotated[int | None, Query(alias='$skip', description='skipping model count default) 0')]=0,
         archive:Annotated[Literal['true', 'false', ''], Query(alias='$archive', description='searching from archive aka database')]=None
     ):
         uref = request.scope['path']
@@ -810,8 +815,6 @@ class UerpControl(SessionControl):
         if '$skip' in query: query.pop('$skip')
         if '$archive' in query: query.pop('$archive')
         if orderBy and not order: order = 'desc'
-        if size: size = int(size)
-        if skip: skip = int(skip)
         query = ' AND '.join([f'{key}:{val}' for key, val in query.items()])
         if query:
             if filter: filter = f"({query}) AND ({' AND '.join(filter)})"

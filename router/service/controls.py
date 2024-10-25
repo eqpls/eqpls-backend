@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
-try: import LOG  # @UnresolvedImport
-except: pass
-
 import traceback
 from fastapi import WebSocketDisconnect
 from common import SessionControl

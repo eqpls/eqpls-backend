@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
 from pydantic import BaseModel
-from common import SECONDS, AAA, SchemaConfig, Option, Reference, ID, Key, BaseSchema, ProfSchema
+from common import SECONDS, AAA, SchemaConfig, Option, Reference, Key, BaseSchema, ProfSchema
 
 
 #===============================================================================

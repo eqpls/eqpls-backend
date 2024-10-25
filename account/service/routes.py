@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
@@ -43,10 +45,10 @@ async def get_auth_info(token: AUTH_HEADER) -> AuthInfo:
 
 
 @api.get(f'{ctrl.uriver}/client/{{clientId}}/secret', tags=['AAA'])
-async def get_client_secret(token: AUTH_HEADER, clientId:str) -> str:
+async def get_client_secret(token: AUTH_HEADER, clientId:str) -> dict:
     (await ctrl.getAuthInfo(token)).checkAdmin()
     secret = await ctrl.keycloak.getClientSecret(ctrl.tenant, clientId)
-    if secret: return secret
+    if secret: return {'clientSecret': secret}
     raise EpException(404, 'Not Found')
 
 
@@ -233,6 +235,7 @@ async def search_group_list(token:AUTH_HEADER, search:str | None=None) -> list[G
 @api.post(f'{ctrl.uriver}/groups', tags=['Group'])
 async def create_group(token: AUTH_HEADER, group:Group) -> Group:
     (await ctrl.getAuthInfo(token)).checkCreate('Group')
+    if group.code in ctrl.accountRestrictGroupCodes: raise EpException(409, 'Conflict')
     groupName = group.name
     try: await ctrl.keycloak.readGroupByName(ctrl.tenant, groupName)
     except: pass

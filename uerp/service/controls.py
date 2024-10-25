@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
 #===============================================================================
 # Import
 #===============================================================================
 from common import UerpControl
-
 from driver.redis import RedisAccount, RedisModel, RedisQueue
 from driver.elasticsearch import ElasticSearch
 from driver.postgresql import PostgreSql
-
 from schema.data import GroupBucket, UserBucket
 from schema.secret.certification import Authority, Server
 from schema.secret.access import OpenSsh

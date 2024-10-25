@@ -1,14 +1,25 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
+try: import LOG  # @UnresolvedImport
+except: pass
+#===============================================================================
+# Import
+#===============================================================================
+
+
+#===============================================================================
+# Implement
+#===============================================================================
 def config(path, module, config):
     defconf = config['default']
     modconf = config[module]
 
     endpoint = defconf['endpoint']
+
     modules = [m.strip() for m in defconf['modules'].split(',')]
     proxies = [proxy.strip() for proxy in modconf['proxies'].split(',')] if 'proxies' in modconf else []
 

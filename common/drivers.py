@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Equal Plus
+@copyright: Equal Plus
 @author: Hye-Churn Jang
 '''
 
@@ -19,6 +19,8 @@ from .models import SchemaInfo, Search
 class DriverBase:
 
     def __init__(self, control): self.control = control
+
+    async def initialize(self, *args, **kargs): await self.connect()
 
     async def connect(self, *args, **kargs): return self
 

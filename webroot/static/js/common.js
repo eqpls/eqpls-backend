@@ -3,41 +3,41 @@ window.Common = window.Common || {
 		console.log("(Common) start");
 
 		// Common definitions /////////////////////////////
-		window.Common.url = `https://${window.Config.endpoint}`;
-		window.Common.Util = window.Common.Util || {};
-		window.Common.DB = window.Common.DB || {};
-		window.Common.DB._databases = window.Config.databases;
-		window.Common.DB._databases.Blob = ["index"];
-		window.Common.Session = window.Common.Session || { Query: {}, Hash: {}, Cookie: {} };
-		window.Common.Rest = window.Common.Rest || {};
-		window.Common.WSock = window.Common.WSock || {};
-		window.Common.Auth = window.Common.Auth || {};
-		window.Common.Auth.url = `${window.Common.url}/auth`;
-		window.Common.Account = window.Common.Account || {};
-		window.Common.Account.url = `${window.Common.url}/account/v${window.Config.version}`;
-		window.Common.Uerp = window.Common.Uerp || {};
-		window.Common.Uerp.url = `${window.Common.url}/uerp/v${window.Config.version}`;
+		Common.url = `https://${Config.endpoint}`;
+		Common.Util = Common.Util || {};
+		Common.DB = Common.DB || {};
+		Common.DB._index = Config.index;
+		Common.DB._index.Blob = ["index"];
+		Common.Session = Common.Session || { Query: {}, Hash: {}, Cookie: {} };
+		Common.Rest = Common.Rest || {};
+		Common.WSock = Common.WSock || {};
+		Common.Auth = Common.Auth || {};
+		Common.Auth.url = `${Common.url}/auth`;
+		Common.Account = Common.Account || {};
+		Common.Account.url = `${Common.url}/account/v${Config.version}`;
+		Common.Uerp = Common.Uerp || {};
+		Common.Uerp.url = `${Common.url}/uerp/v${Config.version}`;
 
 		// login service provider handlers ////////////////
-		window.Common.loginServiceProviders = window.Common.loginServiceProviders || async function() { };
-		window.Common.logoutServiceProviders = window.Common.logoutServiceProviders || async function() { };
+		Common.loginServiceProviders = Common.loginServiceProviders || async function() { };
+		Common.logoutServiceProviders = Common.logoutServiceProviders || async function() { };
 
-		// window.Common.Util /////////////////////////////
-		window.Common.Util.utoa = (str) => { return window.btoa(unescape(encodeURIComponent(str))); };
-		window.Common.Util.atou = (str) => { return decodeURIComponent(escape(window.atob(str))); };
+		// Common.Util /////////////////////////////
+		Common.Util.utoa = (str) => { return window.btoa(unescape(encodeURIComponent(str))); };
+		Common.Util.atou = (str) => { return decodeURIComponent(escape(window.atob(str))); };
 
-		window.Common.Util._regex_uuid = /^[a-z,0-9,-]{36,36}$/;
-		window.Common.Util.checkUUID = (uuid) => { window.Common.Util._regex_uuid.test(uuid); };
-		window.Common.Util.getUUID = () => { return crypto.randomUUID(); };
+		Common.Util._regex_uuid = /^[a-z,0-9,-]{36,36}$/;
+		Common.Util.checkUUID = (uuid) => { Common.Util._regex_uuid.test(uuid); };
+		Common.Util.getUUID = () => { return crypto.randomUUID(); };
 
-		window.Common.Util.getRandomString = (length) => {
+		Common.Util.getRandomString = (length) => {
 			let result = "";
 			let characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 			for (let i = 0; i < length; i++) { result += characters.charAt(Math.floor(Math.random() * 62)); }
 			return result;
 		};
 
-		window.Common.Util.setArrayFunctions = (arr) => {
+		Common.Util.setArrayFunctions = (arr) => {
 			arr.len = () => { return arr.length; };
 			arr.empty = () => {
 				if (arr.len() == 0) { return true; }
@@ -98,7 +98,7 @@ window.Common = window.Common || {
 			return arr;
 		};
 
-		// window.Common.DB ///////////////////////////////
+		// Common.DB ///////////////////////////////
 		function Database(name, tables) {
 			this._name = name;
 			this._tables = [];
@@ -106,15 +106,15 @@ window.Common = window.Common || {
 			request.onsuccess = () => {
 				this._conn = request.result;
 				tables.forEach((table) => { this[table] = new Table(table, this); });
-				window.Common.DB[name] = this;
+				Common.DB[name] = this;
 			};
 			request.onupgradeneeded = () => {
 				tables.forEach((table) => { request.result.createObjectStore(table, { keyPath: "id" }); });
-				window.Common.DB[name] = this;
+				Common.DB[name] = this;
 			};
 			request.onerror = () => {
 				console.error("could not create database");
-				window.Common.DB.pop(name);
+				Common.DB.pop(name);
 			};
 		};
 
@@ -124,7 +124,7 @@ window.Common = window.Common || {
 			this.readAll = () => {
 				return new Promise((resultHandler) => {
 					let request = this._db._conn.transaction(this._name).objectStore(this._name).getAll();
-					request.onsuccess = () => { resultHandler(window.Common.Util.setArrayFunctions(request.result)); };
+					request.onsuccess = () => { resultHandler(Common.Util.setArrayFunctions(request.result)); };
 					request.onerror = () => { resultHandler(request); };
 				});
 			};
@@ -154,8 +154,8 @@ window.Common = window.Common || {
 			console.log(`(DB.${this._db._name}.${name}) table is created`);
 		};
 
-		// window.Common.Session //////////////////////////
-		window.Common.Session.Query.parse = (query) => {
+		// Common.Session //////////////////////////
+		Common.Session.Query.parse = (query) => {
 			let map = {};
 			query.replace("?", "").split("&").forEach((q) => {
 				if (q) {
@@ -165,11 +165,11 @@ window.Common = window.Common || {
 			});
 			return map;
 		};
-		window.Common.Session.Query.get = () => {
-			return window.Common.Query.parse(window.location.search);
+		Common.Session.Query.get = () => {
+			return Common.Query.parse(window.location.search);
 		};
 
-		window.Common.Session.Hash.parse = (hash) => {
+		Common.Session.Hash.parse = (hash) => {
 			let map = {};
 			hash.replace("#", "").split("&").forEach((h) => {
 				if (h) {
@@ -179,16 +179,16 @@ window.Common = window.Common || {
 			});
 			return map;
 		};
-		window.Common.Session.Hash.get = () => {
-			return window.Common.Session.Hash.parse(window.location.hash);
+		Common.Session.Hash.get = () => {
+			return Common.Session.Hash.parse(window.location.hash);
 		};
 
-		window.Common.Session.Cookie.get = (name) => {
+		Common.Session.Cookie.get = (name) => {
 			let value = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
 			return value ? value[2] : null;
 		};
 
-		window.Common.Session.Cookie.set = (name, value, expire, path) => {
+		Common.Session.Cookie.set = (name, value, expire, path) => {
 			if (!expire) { expire = 3600; }
 			if (!path) { path = "/"; }
 			var date = new Date();
@@ -196,25 +196,25 @@ window.Common = window.Common || {
 			document.cookie = `${name}=${value};expires=${date.toUTCString()};path=${path}`;
 		};
 
-		window.Common.Session.Cookie.del = (name, path) => {
+		Common.Session.Cookie.del = (name, path) => {
 			if (!path) { path = "/"; }
 			document.cookie = `${name}=;expires=Thu, 01 Jan 1999 00:00:10 UTC;path=${path}`;
 		};
 
-		// window.Common.Rest /////////////////////////////
-		window.Common.Rest.get = async (url) => {
+		// Common.Rest /////////////////////////////
+		Common.Rest.get = async (url) => {
 			return fetch(url, {
-				headers: window.Common.Auth.headers
+				headers: Common.Auth.headers
 			}).then((res) => {
 				if (res.ok) { return res.json(); }
 				throw res
 			});
 		};
 
-		window.Common.Rest.post = async (url, data) => {
+		Common.Rest.post = async (url, data) => {
 			return fetch(url, {
 				method: "POST",
-				headers: window.Common.Auth.headers,
+				headers: Common.Auth.headers,
 				body: JSON.stringify(data)
 			}).then((res) => {
 				if (res.ok) { return res.json(); }
@@ -222,10 +222,10 @@ window.Common = window.Common || {
 			});
 		};
 
-		window.Common.Rest.put = async (url, data) => {
+		Common.Rest.put = async (url, data) => {
 			return fetch(url, {
 				method: "PUT",
-				headers: window.Common.Auth.headers,
+				headers: Common.Auth.headers,
 				body: JSON.stringify(data)
 			}).then((res) => {
 				if (res.ok) { return res.json(); }
@@ -233,10 +233,10 @@ window.Common = window.Common || {
 			});
 		};
 
-		window.Common.Rest.patch = async (url, data) => {
+		Common.Rest.patch = async (url, data) => {
 			return fetch(url, {
 				method: "PATCH",
-				headers: window.Common.Auth.headers,
+				headers: Common.Auth.headers,
 				body: JSON.stringify(data)
 			}).then((res) => {
 				if (res.ok) { return res.json(); }
@@ -244,10 +244,10 @@ window.Common = window.Common || {
 			});
 		};
 
-		window.Common.Rest.delete = async (url, data) => {
+		Common.Rest.delete = async (url, data) => {
 			return fetch(url, {
 				method: "DELETE",
-				headers: window.Common.Auth.headers,
+				headers: Common.Auth.headers,
 				body: data ? data : null
 			}).then((res) => {
 				if (res.ok) { return res.json(); }
@@ -255,62 +255,62 @@ window.Common = window.Common || {
 			});
 		};
 
-		// window.Common.WSock ////////////////////////////
-		window.Common.WSock.connect = (url, receiver, initiator, closer) => {
+		// Common.WSock ////////////////////////////
+		Common.WSock.connect = (url, receiver, initiator, closer) => {
 			try {
-				let socket = new WebSocket(`wss://${window.Config.endpoint}${url}`);
+				let socket = new WebSocket(`wss://${Config.endpoint}${url}`);
 				socket.sendJson = async (data) => { return socket.send(JSON.stringify(data)); };
 				socket.sendData = async (key, value) => { return socket.send(JSON.stringify([key, value])); };
 				socket.onmessage = (event) => { receiver(event.target, event.data); };
 				socket.onerror = (event) => { console.error("(wsock) error", event); };
 				socket.onopen = (event) => {
 					console.log("(wsock) open");
-					event.target.sendData("auth", window.Common.Auth.accessToken);
+					event.target.sendData("auth", Common.Auth.accessToken);
 					if (initiator) { initiator(event.target); }
 				};
 				socket.onclose = (event) => {
 					console.log("(wsock) close");
-					setTimeout(()=> {window.Common.WSock.connect(url, receiver, initiator, closer);}, 2000);
+					setTimeout(()=> {Common.WSock.connect(url, receiver, initiator, closer);}, 2000);
 					if (closer) { closer(event); }
 				};
 				return socket;
 			} catch (e) {
-				setTimeout(()=> {window.Common.WSock.connect(url, receiver, initiator, closer);}, 2000);
+				setTimeout(()=> {Common.WSock.connect(url, receiver, initiator, closer);}, 2000);
 			}
 		};
 
-		// window.Common.Auth /////////////////////////////
-		window.Common.login = (redirectUri) => {
+		// Common.Auth /////////////////////////////
+		Common.login = (redirectUri) => {
 			let keycloak = new Keycloak({
-				url: window.Common.Auth.url,
-				realm: window.Config.tenant,
-				clientId: window.Config.tenant
+				url: Common.Auth.url,
+				realm: Config.tenant,
+				clientId: Config.client
 			});
 			keycloak.onAuthSuccess = () => {
-				window.Common.Auth.keycloak = keycloak;
-				window.Common.Auth.postLogin = () => {
-					window.Common.Auth.accessToken = window.Common.Auth.keycloak.token;
-					window.Common.Auth.refreshToken = window.Common.Auth.keycloak.refreshToken;
-					window.Common.Auth.idToken = window.Common.Auth.keycloak.idToken;
-					window.Common.Auth.bearerToken = `Bearer ${window.Common.Auth.accessToken}`
-					window.Common.Auth.headers = {
-						"Authorization": window.Common.Auth.bearerToken,
+				Common.Auth.keycloak = keycloak;
+				Common.Auth.postLogin = () => {
+					Common.Auth.accessToken = Common.Auth.keycloak.token;
+					Common.Auth.refreshToken = Common.Auth.keycloak.refreshToken;
+					Common.Auth.idToken = Common.Auth.keycloak.idToken;
+					Common.Auth.bearerToken = `Bearer ${Common.Auth.accessToken}`
+					Common.Auth.headers = {
+						"Authorization": Common.Auth.bearerToken,
 						"Content-Type": "application/json; charset=utf-8",
 						"Accept": "application/json; charset=utf-8"
 					};
-					return window.Common.loginServiceProviders().then(window.Common.Account.getUserInfo().then());
+					return Common.loginServiceProviders().then(Common.Account.getUserInfo().then());
 				};
-				window.Common.Auth.postLogin().then(() => {
+				Common.Auth.postLogin().then(() => {
 					if (window.Module) { for (let key in window.Module) { if (window.Module[key].isAutoLogin) { window.Module[key].login(); } }; }
-					window.Common.Auth.startTokenDaemon();
-					let databaseNames = Object.keys(window.Common.DB._databases);
-					databaseNames.forEach((name) => { new Database(name, window.Common.DB._databases[name]); });
+					Common.Auth.startTokenDaemon();
+					let databaseNames = Object.keys(Common.DB._index);
+					databaseNames.forEach((name) => { new Database(name, Common.DB._index[name]); });
 					function waitStableForMain() {
 						try {
 							for (let i = 0; i < databaseNames.length; i++) {
 								let name = databaseNames[i];
-								let innerList = window.Common.DB[name]._tables.sort().join(',');
-								let outerList = window.Common.DB._databases[name].sort().join(',');
+								let innerList = Common.DB[name]._tables.sort().join(',');
+								let outerList = Common.DB._index[name].sort().join(',');
 								if (innerList != outerList) { return setTimeout(checkDB, 200); }
 							}
 						} catch (e) { return setTimeout(waitStableForMain, 200); }
@@ -329,9 +329,9 @@ window.Common = window.Common || {
 			});
 		};
 
-		window.Common.logout = (redirectUri) => {
-			window.Common.logoutServiceProviders().then(() => {
-				window.Common.Auth.keycloak.logout({
+		Common.logout = (redirectUri) => {
+			Common.logoutServiceProviders().then(() => {
+				Common.Auth.keycloak.logout({
 					redirectUri: redirectUri ? redirectUri : "/"
 				}).catch((error) => {
 					console.error(error);
@@ -342,50 +342,50 @@ window.Common = window.Common || {
 			});
 		};
 
-		window.Common.Auth.startTokenDaemon = () => {
-			window.Common.Auth.keycloak.updateToken(300).then((refreshed) => {
-				if (refreshed) { window.Common.Auth.postLogin(); }
-				setTimeout(window.Common.Auth.startTokenDaemon, 60000);
+		Common.Auth.startTokenDaemon = () => {
+			Common.Auth.keycloak.updateToken(300).then((refreshed) => {
+				if (refreshed) { Common.Auth.postLogin(); }
+				setTimeout(Common.Auth.startTokenDaemon, 60000);
 			});
 		};
 
-		//// window.Common.Account interfaces /////////////
-		window.Common.Account.login = async (username, password) => {
-			let tokens = await window.Common.Rest.post(`${window.Common.Account.url}/login`, {
+		//// Common.Account interfaces /////////////
+		Common.Account.login = async (username, password) => {
+			let tokens = await Common.Rest.post(`${Common.Account.url}/login`, {
 				username: username,
 				password: password
 			});
-			window.Common.Auth.accessToken = tokens.access_token;
-			window.Common.Auth.refreshToken = tokens.refresh_token;
-			window.Common.Auth.bearerToken = `Bearer ${window.Common.Auth.accessToken}`
-			window.Common.Auth.headers = {
-				"Authorization": window.Common.Auth.bearerToken,
+			Common.Auth.accessToken = tokens.access_token;
+			Common.Auth.refreshToken = tokens.refresh_token;
+			Common.Auth.bearerToken = `Bearer ${Common.Auth.accessToken}`
+			Common.Auth.headers = {
+				"Authorization": Common.Auth.bearerToken,
 				"Content-Type": "application/json; charset=utf-8",
 				"Accept": "application/json; charset=utf-8"
 			};
 			await main();
 		};
 
-		window.Common.Account.logout = async () => {
-			await window.Common.Rest.get(`${window.Common.Account.url}/logout?refreshToken=${window.Common.Auth.refreshToken}`);
-			window.Common.Auth.accessToken = null;
-			window.Common.Auth.refreshToken = null;
-			window.Common.Auth.bearerToken = null;
-			window.Common.Auth.headers = {};
+		Common.Account.logout = async () => {
+			await Common.Rest.get(`${Common.Account.url}/logout?refreshToken=${Common.Auth.refreshToken}`);
+			Common.Auth.accessToken = null;
+			Common.Auth.refreshToken = null;
+			Common.Auth.bearerToken = null;
+			Common.Auth.headers = {};
 		};
 
-		window.Common.Account.getUserInfo = async () => {
-			window.Common.Account.UserInfo = await window.Common.Rest.get(`${window.Common.Account.url}/userinfo`);
-			return window.Common.Account.UserInfo;
+		Common.Account.getUserInfo = async () => {
+			Common.Account.UserInfo = await Common.Rest.get(`${Common.Account.url}/userinfo`);
+			return Common.Account.UserInfo;
 		};
 
-		window.Common.Account.getAuthInfo = async () => {
-			window.Common.Account.AuthInfo = await window.Common.Rest.get(`${window.Common.Account.url}/authinfo`);
-			return window.Common.Account.AuthInfo;
+		Common.Account.getAuthInfo = async () => {
+			Common.Account.AuthInfo = await Common.Rest.get(`${Common.Account.url}/authinfo`);
+			return Common.Account.AuthInfo;
 		};
 
-		window.Common.Account.getUsers = async (search) => {
-			return await window.Common.Rest.get(`${window.Common.Account.url}/users${search?"?search="+search:""}`);
+		Common.Account.getUsers = async (search) => {
+			return await Common.Rest.get(`${Common.Account.url}/users${search?"?search="+search:""}`);
 		};
 
 
@@ -394,139 +394,139 @@ window.Common = window.Common || {
 
 
 
-		//// window.Common.Auth model interfaces //////////
+		//// Common.Auth model interfaces //////////
 		/*
-		window.Common.getSchema = async () => { return window.Common.Rest.get(`${window.Common.uerpUrl}/schema`).then((content) => { return content; }); };
+		Common.getSchema = async () => { return Common.Rest.get(`${Common.uerpUrl}/schema`).then((content) => { return content; }); };
 
-		window.Common.Auth.readOrg = async (id) => { return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/org/${id}`).then((content) => { return new Org(content); }); };
-		window.Common.Auth.countOrg = async (query) => {
+		Common.Auth.readOrg = async (id) => { return Common.Rest.get(`${Common.uerpUrl}/common/auth/org/${id}`).then((content) => { return new Org(content); }); };
+		Common.Auth.countOrg = async (query) => {
 			if (query) {
 				let qstr = []
 				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
 				query = `?${qstr.join("&")}`;
 			} else { query = ""; }
-			return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/org/count${query}`).then((content) => { return content });
+			return Common.Rest.get(`${Common.uerpUrl}/common/auth/org/count${query}`).then((content) => { return content });
 		};
-		window.Common.Auth.searchOrg = async (query) => {
+		Common.Auth.searchOrg = async (query) => {
 			if (query) {
 				let qstr = []
 				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
 				query = `?${qstr.join("&")}`;
 			} else { query = ""; }
-			return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/org${query}`).then((contents) => {
+			return Common.Rest.get(`${Common.uerpUrl}/common/auth/org${query}`).then((contents) => {
 				let results = [];
 				contents.forEach((content) => { results.push(new Org(content)); });
-				return window.Common.Util.setArrayFunctions(results);
+				return Common.Util.setArrayFunctions(results);
 			});
 		};
 		function Org(content) {
 			if (content) { Object.assign(this, content); }
-			this.reloadModel = async () => { return window.Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
-			this.createModel = async () => { return window.Common.Rest.post(`${window.Common.uerpUrl}/common/auth/org`, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.updateModel = async () => { return window.Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.deleteModel = async () => { return window.Common.Rest.delete(this.uref).then((content) => { return content; }); };
+			this.reloadModel = async () => { return Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
+			this.createModel = async () => { return Common.Rest.post(`${Common.uerpUrl}/common/auth/org`, this).then((content) => { Object.assign(this, content); return this; }); };
+			this.updateModel = async () => { return Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
+			this.deleteModel = async () => { return Common.Rest.delete(this.uref).then((content) => { return content; }); };
 			this.print = () => { console.log(this); };
 		};
-		window.Common.Auth.Org = Org;
+		Common.Auth.Org = Org;
 
-		window.Common.Auth.readRole = async (id) => { return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/role/${id}`).then((content) => { return new Role(content); }); };
-		window.Common.Auth.countRole = async (query) => {
+		Common.Auth.readRole = async (id) => { return Common.Rest.get(`${Common.uerpUrl}/common/auth/role/${id}`).then((content) => { return new Role(content); }); };
+		Common.Auth.countRole = async (query) => {
 			if (query) {
 				let qstr = []
 				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
 				query = `?${qstr.join("&")}`;
 			} else { query = ""; }
-			return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/role/count${query}`).then((content) => { return content });
+			return Common.Rest.get(`${Common.uerpUrl}/common/auth/role/count${query}`).then((content) => { return content });
 		};
-		window.Common.Auth.searchRole = async (query) => {
+		Common.Auth.searchRole = async (query) => {
 			if (query) {
 				let qstr = []
 				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
 				query = `?${qstr.join("&")}`;
 			} else { query = ""; }
-			return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/role${query}`).then((contents) => {
+			return Common.Rest.get(`${Common.uerpUrl}/common/auth/role${query}`).then((contents) => {
 				let results = [];
 				contents.forEach((content) => { results.push(new Role(content)); });
-				return window.Common.Util.setArrayFunctions(results);
+				return Common.Util.setArrayFunctions(results);
 			});
 		};
 		function Role(content) {
 			if (content) { Object.assign(this, content); }
-			this.reloadModel = async () => { return window.Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
-			this.createModel = async () => { return window.Common.Rest.post(`${window.Common.uerpUrl}/common/auth/role`, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.updateModel = async () => { return window.Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.deleteModel = async () => { return window.Common.Rest.delete(this.uref).then((content) => { return content; }); };
+			this.reloadModel = async () => { return Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
+			this.createModel = async () => { return Common.Rest.post(`${Common.uerpUrl}/common/auth/role`, this).then((content) => { Object.assign(this, content); return this; }); };
+			this.updateModel = async () => { return Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
+			this.deleteModel = async () => { return Common.Rest.delete(this.uref).then((content) => { return content; }); };
 			this.print = () => { console.log(this); };
 		};
-		window.Common.Auth.Role = Role;
+		Common.Auth.Role = Role;
 
-		window.Common.Auth.readGroup = async (id) => { return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/group/${id}`).then((content) => { return new Group(content); }); };
-		window.Common.Auth.countGroup = async (query) => {
+		Common.Auth.readGroup = async (id) => { return Common.Rest.get(`${Common.uerpUrl}/common/auth/group/${id}`).then((content) => { return new Group(content); }); };
+		Common.Auth.countGroup = async (query) => {
 			if (query) {
 				let qstr = []
 				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
 				query = `?${qstr.join("&")}`;
 			} else { query = ""; }
-			return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/group/count${query}`).then((content) => { return content });
+			return Common.Rest.get(`${Common.uerpUrl}/common/auth/group/count${query}`).then((content) => { return content });
 		};
-		window.Common.Auth.searchGroup = async (query) => {
+		Common.Auth.searchGroup = async (query) => {
 			if (query) {
 				let qstr = []
 				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
 				query = `?${qstr.join("&")}`;
 			} else { query = ""; }
-			return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/group${query}`).then((contents) => {
+			return Common.Rest.get(`${Common.uerpUrl}/common/auth/group${query}`).then((contents) => {
 				let results = [];
 				contents.forEach((content) => { results.push(new Group(content)); });
-				return window.Common.Util.setArrayFunctions(results);
+				return Common.Util.setArrayFunctions(results);
 			});
 		};
 		function Group(content) {
 			if (content) { Object.assign(this, content); }
-			this.reloadModel = async () => { return window.Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
-			this.createModel = async () => { return window.Common.Rest.post(`${window.Common.uerpUrl}/common/auth/group`, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.updateModel = async () => { return window.Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.deleteModel = async () => { return window.Common.Rest.delete(this.uref).then((content) => { return content; }); };
+			this.reloadModel = async () => { return Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
+			this.createModel = async () => { return Common.Rest.post(`${Common.uerpUrl}/common/auth/group`, this).then((content) => { Object.assign(this, content); return this; }); };
+			this.updateModel = async () => { return Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
+			this.deleteModel = async () => { return Common.Rest.delete(this.uref).then((content) => { return content; }); };
 			this.print = () => { console.log(this); };
 		};
-		window.Common.Auth.Group = Group;
+		Common.Auth.Group = Group;
 
-		window.Common.Auth.readAccount = async (id) => { return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/account/${id}`).then((content) => { return new Account(content); }); };
-		window.Common.Auth.countAccount = async (query) => {
+		Common.Auth.readAccount = async (id) => { return Common.Rest.get(`${Common.uerpUrl}/common/auth/account/${id}`).then((content) => { return new Account(content); }); };
+		Common.Auth.countAccount = async (query) => {
 			if (query) {
 				let qstr = []
 				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
 				query = `?${qstr.join("&")}`;
 			} else { query = ""; }
-			return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/account/count${query}`).then((content) => { return content });
+			return Common.Rest.get(`${Common.uerpUrl}/common/auth/account/count${query}`).then((content) => { return content });
 		};
-		window.Common.Auth.searchAccount = async (query) => {
+		Common.Auth.searchAccount = async (query) => {
 			if (query) {
 				let qstr = []
 				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
 				query = `?${qstr.join("&")}`;
 			} else { query = ""; }
-			return window.Common.Rest.get(`${window.Common.uerpUrl}/common/auth/account${query}`).then((contents) => {
+			return Common.Rest.get(`${Common.uerpUrl}/common/auth/account${query}`).then((contents) => {
 				let results = [];
 				contents.forEach((content) => { results.push(new Account(content)); });
-				return window.Common.Util.setArrayFunctions(results);
+				return Common.Util.setArrayFunctions(results);
 			});
 		};
 		function Account(content) {
 			if (content) { Object.assign(this, content); }
-			this.reloadModel = async () => { return window.Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
-			this.createModel = async () => { return window.Common.Rest.post(`${window.Common.uerpUrl}/common/auth/account`, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.updateModel = async () => { return window.Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.deleteModel = async () => { return window.Common.Rest.delete(this.uref).then((content) => { return content; }); };
+			this.reloadModel = async () => { return Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
+			this.createModel = async () => { return Common.Rest.post(`${Common.uerpUrl}/common/auth/account`, this).then((content) => { Object.assign(this, content); return this; }); };
+			this.updateModel = async () => { return Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
+			this.deleteModel = async () => { return Common.Rest.delete(this.uref).then((content) => { return content; }); };
 			this.print = () => { console.log(this); };
 		};
-		window.Common.Auth.Account = Account;
+		Common.Auth.Account = Account;
 
 		*/
 
 		// initialize sub modules /////////////////////////
 		if (window.Module) { for (let key in window.Module) { window.Module[key].init(); }; }
 		console.log("(Common) ready");
-		return window.Common;
+		return Common;
 	}
 };
