@@ -255,7 +255,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         schemaInfo = self.__class__.getSchemaInfo()
         if schemaInfo.provider:
             if CRUD.checkRead(schemaInfo.crud):
-                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else f'Bearer {schemaInfo.control.getSystemToken()}'}
+                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else 'Bearer ' + await schemaInfo.control.getSystemToken()}
                 async with AsyncRest(schemaInfo.provider) as req: return schemaInfo.ref(**(await req.get(self.uref, headers=headers)))
             else: raise EpException(405, 'Method Not Allowed')
         elif schemaInfo.control:
@@ -274,7 +274,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         schemaInfo = cls.getSchemaInfo()
         if schemaInfo.provider:
             if CRUD.checkRead(schemaInfo.crud):
-                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else f'Bearer {schemaInfo.control.getSystemToken()}'}
+                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else 'Bearer ' + await schemaInfo.control.getSystemToken()}
                 async with AsyncRest(schemaInfo.provider) as req: return cls(**(await req.get(f'{schemaInfo.path}/{id}', headers=headers)))
             else: raise EpException(405, 'Method Not Allowed')
         elif schemaInfo.control:
@@ -296,7 +296,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         schemaInfo = cls.getSchemaInfo()
         if schemaInfo.provider:
             if CRUD.checkRead(schemaInfo.crud):
-                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else f'Bearer {schemaInfo.control.getSystemToken()}'}
+                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else 'Bearer ' + await schemaInfo.control.getSystemToken()}
                 query = {}
                 if filter: query['$filter'] = filter
                 if orderBy and order:
@@ -324,7 +324,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         schemaInfo = cls.getSchemaInfo()
         if schemaInfo.provider:
             if CRUD.checkRead(schemaInfo.crud):
-                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else f'Bearer {schemaInfo.control.getSystemToken()}'}
+                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else 'Bearer ' + await schemaInfo.control.getSystemToken()}
                 query = {}
                 if filter: query['$filter'] = filter
                 if archive: query['$archive'] = archive
@@ -345,7 +345,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if schemaInfo.provider:
             if CRUD.checkCreate(schemaInfo.crud):
                 if schemaInfo.createHandler: await schemaInfo.createHandler(self)
-                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else f'Bearer {schemaInfo.control.getSystemToken()}'}
+                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else 'Bearer ' + await schemaInfo.control.getSystemToken()}
                 async with AsyncRest(schemaInfo.provider) as req: model = await req.post(schemaInfo.path, headers=headers, json=self.model_dump())
                 return self.__class__(**model)
             else: raise EpException(405, 'Method Not Allowed')
@@ -366,7 +366,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if schemaInfo.provider:
             if CRUD.checkUpdate(schemaInfo.crud):
                 if schemaInfo.updateHandler: await schemaInfo.updateHandler(self)
-                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else f'Bearer {schemaInfo.control.getSystemToken()}'}
+                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else 'Bearer ' + await schemaInfo.control.getSystemToken()}
                 async with AsyncRest(schemaInfo.provider) as req: model = await req.put(f'{schemaInfo.path}/{id}', headers=headers, json=self.model_dump())
                 return self.__class__(**model)
             else: raise EpException(405, 'Method Not Allowed')
@@ -388,7 +388,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         if schemaInfo.provider:
             if CRUD.checkDelete(schemaInfo.crud):
                 if schemaInfo.deleteHandler: await schemaInfo.deleteHandler(self)
-                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else f'Bearer {schemaInfo.control.getSystemToken()}'}
+                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else 'Bearer ' + await schemaInfo.control.getSystemToken()}
                 force = '?$force=true' if force else ''
                 async with AsyncRest(schemaInfo.provider) as req: status = await req.delete(f'{schemaInfo.path}/{id}{force}', headers=headers)
                 return ModelStatus(**status)
@@ -409,7 +409,7 @@ class BaseSchema(StatusSchema, IdentSchema):
         schemaInfo = cls.getSchemaInfo()
         if schemaInfo.provider:
             if CRUD.checkDelete(schemaInfo.crud):
-                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else f'Bearer {schemaInfo.control.getSystemToken()}'}
+                headers = {'Authorization': f'{token.scheme} {token.credentials}' if token else 'Bearer ' + await schemaInfo.control.getSystemToken()}
                 force = '?$force=true' if force else ''
                 async with AsyncRest(schemaInfo.provider) as req: status = await req.delete(f'{schemaInfo.path}/{id}{force}', headers=headers)
                 return ModelStatus(**status)
