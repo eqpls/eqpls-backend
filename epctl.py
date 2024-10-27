@@ -61,8 +61,6 @@ def build(module): client.images.build(nocache=True, rm=True, path=f'{path}/{mod
 def deploy(module):
     try: os.mkdir(f'{path}/{module}/conf.d')
     except: pass
-    try: os.mkdir(f'{path}/{module}/test.d')
-    except: pass
 
     importlib.import_module(f'{module}.deploy').config(path, module, config)
 
@@ -89,7 +87,6 @@ def deploy(module):
         ports[internal] = (external[0], external[1])
 
     volumes = [f'{os.path.abspath(hostpath)}:{contpath}' for hostpath, contpath in volconf.items()]
-    if stage == 'dev': volumes.append(f'{path}/{module}/test.d:/test.d',)
 
     healthcheck = {}
     if healthconf:
