@@ -40,5 +40,3 @@ class Control(UerpControl):
         await self.registerModel(Authority)
         await self.registerModel(Server)
         await self.registerModel(OpenSsh)
-
-    async def shutdown(self): pass
