@@ -30,7 +30,6 @@ window.Module.Data = window.Module.Data || {
 							Module.Data.getUserBuckets = async () => {
 								let result = [];
 								let resources = await Common.Rest.get(`${Common.Uerp.url}/data/userbucket?$size=20`);
-								console.log(resources);
 								resources.forEach((resource) => { result.push(new Bucket(resource)); });
 								return Common.Util.setArrayFunctions(result);
 							};
@@ -97,6 +96,12 @@ window.Module.Data = window.Module.Data || {
 
 		function AccessKey(content) {
 			if (content) { Object.assign(this, content); }
+			this.reload = async () => {
+				return Object.assign(this, fetch(`${Module.Data.url}/service-accounts/${Common.Util.utoa(this.accessKey)}`).then((res) => {
+					if (res.ok) { return true; }
+					throw res;
+				}));
+			};
 			this.delete = async () => {
 				return fetch(`${Module.Data.url}/service-accounts/${Common.Util.utoa(this.accessKey)}`, {
 					method: "DELETE"
@@ -151,17 +156,26 @@ window.Module.Data = window.Module.Data || {
 				}
 				return results;
 			};
+			this.reload = async () => {
+				switch (this.sref) {
+					case "data.GroupBucket": return Object.assign(this, await Common.Rest.get(`${Module.Data.moduleUrl}/data/groupbucket/${this.id}`));
+					case "data.UserBucket": return Object.assign(this, await Common.Rest.get(`${Module.Data.moduleUrl}/data/userbucket/${this.id}`));
+				};
+				throw "could not aware bucket type";
+			};
 			this.update = async () => {
 				switch (this.sref) {
-					case "data.GroupBucket": return new Bucket(await Common.Rest.put(`${Module.Data.moduleUrl}/data/groupbucket/${this.id}?$publish`, this));
-					case "data.UserBucket": return new Bucket(await Common.Rest.put(`${Module.Data.moduleUrl}/data/userbucket/${this.id}?$publish`, this));
-				}
+					case "data.GroupBucket": return Object.assign(this, await Common.Rest.put(`${Module.Data.moduleUrl}/data/groupbucket/${this.id}?$publish`, this));
+					case "data.UserBucket": return Object.assign(this, await Common.Rest.put(`${Module.Data.moduleUrl}/data/userbucket/${this.id}?$publish`, this));
+				};
+				throw "could not aware bucket type";
 			};
 			this.delete = async () => {
 				switch (this.sref) {
 					case "data.GroupBucket": return await Common.Rest.delete(`${Module.Data.moduleUrl}/data/groupbucket/${this.id}?$publish`);
 					case "data.UserBucket": return await Common.Rest.delete(`${Module.Data.moduleUrl}/data/userbucket/${this.id}?$publish`);
-				}
+				};
+				throw "could not aware bucket type";
 			};
 			this.print = () => { console.log(this); };
 		};
@@ -219,6 +233,14 @@ window.Module.Data = window.Module.Data || {
 				}
 				return results;
 			};
+			this.reload = async () => {
+				return Object.assign(this, fetch(`${Module.Data.url}/buckets/${this.bucket.externalId}/objects?prefix=${Common.Util.utoa(this.name)}`).then((res) => {
+					if (res.ok) { return res.json(); }
+					throw res;
+				}).then((data) => {
+					return data;
+				}));
+			};
 			this.delete = async () => {
 				return fetch(`${Module.Data.url}/buckets/${this.bucket.externalId}/objects?prefix=${Common.Util.utoa(this.name)}&recursive=true`, {
 					method: "DELETE"
@@ -254,6 +276,14 @@ window.Module.Data = window.Module.Data || {
 				dom.remove();
 				URL.revokeObjectURL(url);
 				return blob;
+			};
+			this.reload = async () => {
+				return Object.assign(this, fetch(`${Module.Data.url}/buckets/${this.bucket.externalId}/objects?prefix=${Common.Util.utoa(this.name)}`).then((res) => {
+					if (res.ok) { return res.json(); }
+					throw res;
+				}).then((data) => {
+					return data;
+				}));
 			};
 			this.delete = async () => {
 				await Common.DB.Blob.index.delete(this.etag);

@@ -105,8 +105,8 @@ class User(BaseModel):
     uref:str = ''
     username:str
     email:str
-    firstName:str
-    lastName:str
+    firstName:str = ''
+    lastName:str = ''
 
 
 class Group(BaseModel):

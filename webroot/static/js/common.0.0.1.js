@@ -3,6 +3,7 @@ window.Common = window.Common || {
 		console.log("(Common) start");
 
 		// Common definitions /////////////////////////////
+		Common.main = main;
 		Common.url = `https://${Config.endpoint}`;
 		Common.Util = Common.Util || {};
 		Common.DB = Common.DB || {};
@@ -270,12 +271,12 @@ window.Common = window.Common || {
 				};
 				socket.onclose = (event) => {
 					console.log("(wsock) close");
-					setTimeout(()=> {Common.WSock.connect(url, receiver, initiator, closer);}, 2000);
+					setTimeout(() => { Common.WSock.connect(url, receiver, initiator, closer); }, 2000);
 					if (closer) { closer(event); }
 				};
 				return socket;
 			} catch (e) {
-				setTimeout(()=> {Common.WSock.connect(url, receiver, initiator, closer);}, 2000);
+				setTimeout(() => { Common.WSock.connect(url, receiver, initiator, closer); }, 2000);
 			}
 		};
 
@@ -314,7 +315,7 @@ window.Common = window.Common || {
 								if (innerList != outerList) { return setTimeout(checkDB, 200); }
 							}
 						} catch (e) { return setTimeout(waitStableForMain, 200); }
-						main();
+						if (Common.main) { Common.main(); }
 					};
 					waitStableForMain();
 				});
@@ -349,7 +350,7 @@ window.Common = window.Common || {
 			});
 		};
 
-		//// Common.Account interfaces /////////////
+		// Common.Account //////////////////////////
 		Common.Account.login = async (username, password) => {
 			let tokens = await Common.Rest.post(`${Common.Account.url}/login`, {
 				username: username,
@@ -363,7 +364,7 @@ window.Common = window.Common || {
 				"Content-Type": "application/json; charset=utf-8",
 				"Accept": "application/json; charset=utf-8"
 			};
-			await main();
+			if (Common.main) { Common.main(); }
 		};
 
 		Common.Account.logout = async () => {
@@ -384,145 +385,128 @@ window.Common = window.Common || {
 			return Common.Account.AuthInfo;
 		};
 
-		Common.Account.getUsers = async (search) => {
-			return await Common.Rest.get(`${Common.Account.url}/users${search?"?search="+search:""}`);
-		};
-
-
-
-
-
-
-
-		//// Common.Auth model interfaces //////////
-		/*
-		Common.getSchema = async () => { return Common.Rest.get(`${Common.uerpUrl}/schema`).then((content) => { return content; }); };
-
-		Common.Auth.readOrg = async (id) => { return Common.Rest.get(`${Common.uerpUrl}/common/auth/org/${id}`).then((content) => { return new Org(content); }); };
-		Common.Auth.countOrg = async (query) => {
-			if (query) {
-				let qstr = []
-				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
-				query = `?${qstr.join("&")}`;
-			} else { query = ""; }
-			return Common.Rest.get(`${Common.uerpUrl}/common/auth/org/count${query}`).then((content) => { return content });
-		};
-		Common.Auth.searchOrg = async (query) => {
-			if (query) {
-				let qstr = []
-				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
-				query = `?${qstr.join("&")}`;
-			} else { query = ""; }
-			return Common.Rest.get(`${Common.uerpUrl}/common/auth/org${query}`).then((contents) => {
-				let results = [];
-				contents.forEach((content) => { results.push(new Org(content)); });
-				return Common.Util.setArrayFunctions(results);
+		Common.Account.changePassword = async (password) => {
+			return await Common.Rest.post(`${Common.Account.url}/password`, {
+				username: Common.Account.UserInfo.username,
+				password: password
 			});
+		}
+
+		//// Common.Account.User ///////////////////
+		Common.Account.readUser = async (userId) => {
+			return new User(await Common.Rest.get(`${Common.Account.url}/user/${userId}`));
 		};
-		function Org(content) {
+
+		Common.Account.readUserByUsername = async (username) => {
+			return new User(await Common.Rest.get(`${Common.Account.url}/username/${username}`));
+		};
+
+		Common.Account.searchUsers = async (search) => {
+			let result = [];
+			(await Common.Rest.get(`${Common.Account.url}/user${search ? "?$search=" + search : ""}`)).forEach((resource) => {
+				result.push(new User(resource));
+			});
+			return Common.Util.setArrayFunctions(result);
+		};
+
+		Common.Account.createUser = async (username, email, firstName, lastName) => {
+			return new User(await Common.Rest.post(`${Common.Account.url}/user`, {
+				username: username,
+				email: email,
+				firstName: firstName ? firstName : username,
+				lastName: lastName ? lastName : username
+			}));
+		};
+
+		function User(content) {
 			if (content) { Object.assign(this, content); }
-			this.reloadModel = async () => { return Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
-			this.createModel = async () => { return Common.Rest.post(`${Common.uerpUrl}/common/auth/org`, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.updateModel = async () => { return Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.deleteModel = async () => { return Common.Rest.delete(this.uref).then((content) => { return content; }); };
-			this.print = () => { console.log(this); };
+			this.changePassword = async () => {
+				await Common.Rest.post(`${Common.Account.url}/password`, {
+					username: this.username,
+					password: password
+				});
+				return this;
+			};
+			this.reload = async () => { return Object.assign(this, await Common.Rest.get(`${Common.Account.url}/user/${this.id}`)); };
+			this.update = async () => { return Object.assign(this, await Common.Rest.post(`${Common.Account.url}/user/${this.id}`, this)); };
+			this.delete = async () => { return await Common.Rest.delete(`${Common.Account.url}/user/${this.id}`); };
 		};
-		Common.Auth.Org = Org;
 
-		Common.Auth.readRole = async (id) => { return Common.Rest.get(`${Common.uerpUrl}/common/auth/role/${id}`).then((content) => { return new Role(content); }); };
-		Common.Auth.countRole = async (query) => {
-			if (query) {
-				let qstr = []
-				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
-				query = `?${qstr.join("&")}`;
-			} else { query = ""; }
-			return Common.Rest.get(`${Common.uerpUrl}/common/auth/role/count${query}`).then((content) => { return content });
+		//// Common.Account.Group //////////////////
+		Common.Account.readGroup = async (groupId) => {
+			return new Group(await Common.Rest.get(`${Common.Account.url}/group/${groupId}`));
 		};
-		Common.Auth.searchRole = async (query) => {
-			if (query) {
-				let qstr = []
-				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
-				query = `?${qstr.join("&")}`;
-			} else { query = ""; }
-			return Common.Rest.get(`${Common.uerpUrl}/common/auth/role${query}`).then((contents) => {
-				let results = [];
-				contents.forEach((content) => { results.push(new Role(content)); });
-				return Common.Util.setArrayFunctions(results);
+
+		Common.Account.readGroupByGroupName = async (groupName) => {
+			return new Group(await Common.Rest.get(`${Common.Account.url}/groupname/${groupName}`));
+		};
+
+		Common.Account.readGroupByGroupCode = async (groupCode) => {
+			return new Group(await Common.Rest.get(`${Common.Account.url}/groupcode/${groupCode}`));
+		};
+
+		Common.Account.searchGroups = async (search) => {
+			let result = [];
+			(await Common.Rest.get(`${Common.Account.url}/group${search ? "?$search=" + search : ""}`)).forEach((resource) => {
+				result.push(new Group(resource));
 			});
+			return Common.Util.setArrayFunctions(result);
 		};
-		function Role(content) {
+
+		Common.Account.createGroup = async (name, code, parentId) => {
+			return new Group(await Common.Rest.post(`${Common.Account.url}/group`, {
+				name: name,
+				code: code,
+				parentId: parentId ? parentId : undefined
+			}));
+		};
+
+		function ACL(content) {
 			if (content) { Object.assign(this, content); }
-			this.reloadModel = async () => { return Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
-			this.createModel = async () => { return Common.Rest.post(`${Common.uerpUrl}/common/auth/role`, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.updateModel = async () => { return Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.deleteModel = async () => { return Common.Rest.delete(this.uref).then((content) => { return content; }); };
-			this.print = () => { console.log(this); };
+			this.setSref = (sref) => {
+				this.sref = sref;
+				return this;
+			};
+			this.setCRUD = (crud) => {
+				this.crud = crud;
+				return this;
+			};
 		};
-		Common.Auth.Role = Role;
 
-		Common.Auth.readGroup = async (id) => { return Common.Rest.get(`${Common.uerpUrl}/common/auth/group/${id}`).then((content) => { return new Group(content); }); };
-		Common.Auth.countGroup = async (query) => {
-			if (query) {
-				let qstr = []
-				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
-				query = `?${qstr.join("&")}`;
-			} else { query = ""; }
-			return Common.Rest.get(`${Common.uerpUrl}/common/auth/group/count${query}`).then((content) => { return content });
-		};
-		Common.Auth.searchGroup = async (query) => {
-			if (query) {
-				let qstr = []
-				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
-				query = `?${qstr.join("&")}`;
-			} else { query = ""; }
-			return Common.Rest.get(`${Common.uerpUrl}/common/auth/group${query}`).then((contents) => {
-				let results = [];
-				contents.forEach((content) => { results.push(new Group(content)); });
-				return Common.Util.setArrayFunctions(results);
-			});
-		};
 		function Group(content) {
 			if (content) { Object.assign(this, content); }
-			this.reloadModel = async () => { return Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
-			this.createModel = async () => { return Common.Rest.post(`${Common.uerpUrl}/common/auth/group`, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.updateModel = async () => { return Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.deleteModel = async () => { return Common.Rest.delete(this.uref).then((content) => { return content; }); };
-			this.print = () => { console.log(this); };
+			this.getACLs = async () => {
+				let result = [];
+				(await Common.Rest.get(`${Common.Account.url}/group/${this.id}/acl`)).forEach((resource) => {
+					result.push(new ACL(resource));
+				});
+				return Common.Util.setArrayFunctions(result);
+			};
+			this.updateACLs = async (aclObjs) => {
+				let result = [];
+				(await Common.Rest.put(`${Common.Account.url}/group/${this.id}/acl`, aclObjs)).forEach((resource) => {
+					result.push(new ACL(resource));
+				});
+				return Common.Util.setArrayFunctions(result);
+			};
+			this.getUsers = async () => {
+				let result = [];
+				(await Common.Rest.get(`${Common.Account.url}/group/${this.id}/user`)).forEach((resource) => {
+					result.push(new User(resource));
+				});
+				return Common.Util.setArrayFunctions(result);
+			};
+			this.updateUsers = async (userObjs) => {
+				let result = [];
+				(await Common.Rest.put(`${Common.Account.url}/group/${this.id}/user`, userObjs)).forEach((resource) => {
+					result.push(new User(resource));
+				});
+				return Common.Util.setArrayFunctions(result);
+			};
+			this.reload = async () => { return Object.assign(this, await Common.Rest.get(`${Common.Account.url}/group/${this.id}`)); };
+			this.update = async () => { return Object.assign(this, await Common.Rest.post(`${Common.Account.url}/group/${this.id}`, this)); };
+			this.delete = async () => { return await Common.Rest.delete(`${Common.Account.url}/group/${this.id}`); };
 		};
-		Common.Auth.Group = Group;
-
-		Common.Auth.readAccount = async (id) => { return Common.Rest.get(`${Common.uerpUrl}/common/auth/account/${id}`).then((content) => { return new Account(content); }); };
-		Common.Auth.countAccount = async (query) => {
-			if (query) {
-				let qstr = []
-				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
-				query = `?${qstr.join("&")}`;
-			} else { query = ""; }
-			return Common.Rest.get(`${Common.uerpUrl}/common/auth/account/count${query}`).then((content) => { return content });
-		};
-		Common.Auth.searchAccount = async (query) => {
-			if (query) {
-				let qstr = []
-				for (let key in query) { qstr.push(`${key}=${query[key]}`); }
-				query = `?${qstr.join("&")}`;
-			} else { query = ""; }
-			return Common.Rest.get(`${Common.uerpUrl}/common/auth/account${query}`).then((contents) => {
-				let results = [];
-				contents.forEach((content) => { results.push(new Account(content)); });
-				return Common.Util.setArrayFunctions(results);
-			});
-		};
-		function Account(content) {
-			if (content) { Object.assign(this, content); }
-			this.reloadModel = async () => { return Common.Rest.get(this.uref).then((content) => { Object.assign(this, content); return this; }); };
-			this.createModel = async () => { return Common.Rest.post(`${Common.uerpUrl}/common/auth/account`, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.updateModel = async () => { return Common.Rest.put(this.uref, this).then((content) => { Object.assign(this, content); return this; }); };
-			this.deleteModel = async () => { return Common.Rest.delete(this.uref).then((content) => { return content; }); };
-			this.print = () => { console.log(this); };
-		};
-		Common.Auth.Account = Account;
-
-		*/
 
 		// initialize sub modules /////////////////////////
 		if (window.Module) { for (let key in window.Module) { window.Module[key].init(); }; }

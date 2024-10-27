@@ -9,6 +9,8 @@ except: pass
 #===============================================================================
 # Import
 #===============================================================================
+from typing import Annotated
+from fastapi import Query
 from common import EpException, AUTH_HEADER, ModelStatus, getNewsAndDelsArray
 from common import LoginRequest, UserInfo, AuthInfo, User, Group, AccessControl
 from .controls import Control
@@ -44,6 +46,17 @@ async def get_auth_info(token: AUTH_HEADER) -> AuthInfo:
     return await ctrl.getAuthInfo(token)
 
 
+@api.get(f'{ctrl.uriver}/password', tags=['AAA'])
+async def change_password(token: AUTH_HEADER, userpass:LoginRequest) -> UserInfo:
+    userInfo = await ctrl.getUserInfo(token)
+    if userInfo['username'] == userpass.username: userId = userInfo['id']
+    else:
+        (await ctrl.getAuthInfo(token)).checkAdmin()
+        userId = await ctrl.keycloak.readUserByUsername(ctrl.tenant, userpass.username)['id']
+    await ctrl.keycloak.setUserPassword(ctrl.tenant, userId, userpass.password, False)
+    return {'result': 'ok'}
+
+
 @api.get(f'{ctrl.uriver}/client/{{clientId}}/secret', tags=['AAA'])
 async def get_client_secret(token: AUTH_HEADER, clientId:str) -> dict:
     (await ctrl.getAuthInfo(token)).checkAdmin()
@@ -52,7 +65,7 @@ async def get_client_secret(token: AUTH_HEADER, clientId:str) -> dict:
     raise EpException(404, 'Not Found')
 
 
-@api.get(f'{ctrl.uriver}/users/{{userId}}', tags=['User'])
+@api.get(f'{ctrl.uriver}/user/{{userId}}', tags=['User'])
 async def read_user(token: AUTH_HEADER, userId:str) -> User:
     (await ctrl.getAuthInfo(token)).checkRead('User')
     user = await ctrl.keycloak.readUser(ctrl.tenant, userId)
@@ -70,8 +83,11 @@ async def read_user_by_username(token: AUTH_HEADER, username:str) -> User:
     return user
 
 
-@api.get(f'{ctrl.uriver}/users', tags=['User'])
-async def search_user_list(token:AUTH_HEADER, search:str | None=None) -> list[User]:
+@api.get(f'{ctrl.uriver}/user', tags=['User'])
+async def search_user_list(
+    token:AUTH_HEADER,
+    search:Annotated[str | None, Query(alias='$search', description='searching keyword')]=None
+) -> list[User]:
     (await ctrl.getAuthInfo(token)).checkRead('User')
     result = []
     for user in await ctrl.keycloak.searchUsers(ctrl.tenant, search):
@@ -81,23 +97,22 @@ async def search_user_list(token:AUTH_HEADER, search:str | None=None) -> list[Us
     return result
 
 
-@api.post(f'{ctrl.uriver}/users', tags=['User'])
+@api.post(f'{ctrl.uriver}/user', tags=['User'])
 async def create_user(token: AUTH_HEADER, user:User) -> User:
     (await ctrl.getAuthInfo(token)).checkCreate('User')
     username = user.username
-    await ctrl.keycloak.createUser(ctrl.tenant, username, user.email, user.firstName, user.lastName)
+    await ctrl.keycloak.createUser(ctrl.tenant, username, user.email, user.firstName if user.firstName else username, user.lastName if user.lastName else username)
     user = await ctrl.keycloak.readUserByUsername(ctrl.tenant, username)
     userId = user['id']
     await ctrl.keycloak.unsetUserRoles(ctrl.tenant, userId, await ctrl.keycloak.getUserRoles(ctrl.tenant, userId))
     await ctrl.keycloak.setUserEnabled(ctrl.tenant, userId, True)
-    await ctrl.keycloak.setUserPassword(ctrl.tenant, userId, username)
     await ctrl.keycloak.setUserToGroup(ctrl.tenant, userId, ctrl.userGroupId)
     user['sref'] = 'User'
     user['uref'] = f'{ctrl.uriver}/users/{userId}'
     return user
 
 
-@api.put(f'{ctrl.uriver}/users/{{userId}}', tags=['User'])
+@api.put(f'{ctrl.uriver}/user/{{userId}}', tags=['User'])
 async def update_user(token: AUTH_HEADER, userId:str, _user:User) -> User:
     (await ctrl.getAuthInfo(token)).checkUpdate('User')
     user = await ctrl.keycloak.readUser(ctrl.tenant, userId)
@@ -110,7 +125,7 @@ async def update_user(token: AUTH_HEADER, userId:str, _user:User) -> User:
     return user
 
 
-@api.delete(f'{ctrl.uriver}/users/{{userId}}', tags=['User'])
+@api.delete(f'{ctrl.uriver}/user/{{userId}}', tags=['User'])
 async def delete_user(token: AUTH_HEADER, userId:str) -> ModelStatus:
     (await ctrl.getAuthInfo(token)).checkDelete('User')
     await ctrl.keycloak.deleteUser(ctrl.tenant, userId)
@@ -122,7 +137,7 @@ async def delete_user(token: AUTH_HEADER, userId:str) -> ModelStatus:
     }
 
 
-@api.get(f'{ctrl.uriver}/groups/{{groupId}}', tags=['Group'])
+@api.get(f'{ctrl.uriver}/group/{{groupId}}', tags=['Group'])
 async def read_group(token: AUTH_HEADER, groupId:str) -> Group:
     (await ctrl.getAuthInfo(token)).checkRead('Group')
     group = await ctrl.keycloak.readGroup(ctrl.tenant, groupId)
@@ -177,7 +192,7 @@ async def read_group_by_code(token: AUTH_HEADER, groupCode:str) -> Group:
     }
 
 
-@api.get(f'{ctrl.uriver}/groups/{{groupId}}/acl', tags=['Group'])
+@api.get(f'{ctrl.uriver}/group/{{groupId}}/acl', tags=['Group'])
 async def read_group_acl(token: AUTH_HEADER, groupId:str) -> list[AccessControl]:
     (await ctrl.getAuthInfo(token)).checkRead('Group')
     group = await ctrl.keycloak.readGroup(ctrl.tenant, groupId)
@@ -190,7 +205,7 @@ async def read_group_acl(token: AUTH_HEADER, groupId:str) -> list[AccessControl]
     } for sref, crud in role['attributes'].items()]
 
 
-@api.get(f'{ctrl.uriver}/groups/{{groupId}}/users', tags=['Group'])
+@api.get(f'{ctrl.uriver}/group/{{groupId}}/user', tags=['Group'])
 async def read_group_users(token: AUTH_HEADER, groupId:str) -> list[User]:
     (await ctrl.getAuthInfo(token)).checkRead('Group')
     result = []
@@ -201,7 +216,7 @@ async def read_group_users(token: AUTH_HEADER, groupId:str) -> list[User]:
     return result
 
 
-@api.get(f'{ctrl.uriver}/groups/{{groupCode}}/users', tags=['Group'])
+@api.get(f'{ctrl.uriver}/group/{{groupCode}}/user', tags=['Group'])
 async def read_group_users_by_code(token: AUTH_HEADER, groupCode:str) -> list[User]:
     (await ctrl.getAuthInfo(token)).checkRead('User')
     result = []
@@ -212,8 +227,11 @@ async def read_group_users_by_code(token: AUTH_HEADER, groupCode:str) -> list[Us
     return result
 
 
-@api.get(f'{ctrl.uriver}/groups', tags=['Group'])
-async def search_group_list(token:AUTH_HEADER, search:str | None=None) -> list[Group]:
+@api.get(f'{ctrl.uriver}/group', tags=['Group'])
+async def search_group_list(
+    token:AUTH_HEADER,
+    search:Annotated[str | None, Query(alias='$search', description='searching keyword')]=None
+) -> list[Group]:
     (await ctrl.getAuthInfo(token)).checkRead('Group')
     result = []
     groups = await ctrl.keycloak.searchGroups(ctrl.tenant, search)
@@ -232,7 +250,7 @@ async def search_group_list(token:AUTH_HEADER, search:str | None=None) -> list[G
     return result
 
 
-@api.post(f'{ctrl.uriver}/groups', tags=['Group'])
+@api.post(f'{ctrl.uriver}/group', tags=['Group'])
 async def create_group(token: AUTH_HEADER, group:Group) -> Group:
     (await ctrl.getAuthInfo(token)).checkCreate('Group')
     if group.code in ctrl.accountRestrictGroupCodes: raise EpException(409, 'Conflict')
@@ -263,7 +281,7 @@ async def create_group(token: AUTH_HEADER, group:Group) -> Group:
     }
 
 
-@api.put(f'{ctrl.uriver}/groups/{{groupId}}', tags=['Group'])
+@api.put(f'{ctrl.uriver}/group/{{groupId}}', tags=['Group'])
 async def update_group(token: AUTH_HEADER, groupId:str, _group:Group) -> Group:
     (await ctrl.getAuthInfo(token)).checkUpdate('Group')
     group = await ctrl.keycloak.readGroup(ctrl.tenant, groupId)
@@ -282,7 +300,7 @@ async def update_group(token: AUTH_HEADER, groupId:str, _group:Group) -> Group:
     }
 
 
-@api.put(f'{ctrl.uriver}/groups/{{groupId}}/acl', tags=['Group'])
+@api.put(f'{ctrl.uriver}/group/{{groupId}}/acl', tags=['Group'])
 async def update_group_acl(token: AUTH_HEADER, groupId:str, accessControlList:list[AccessControl]) -> list[AccessControl]:
     (await ctrl.getAuthInfo(token)).checkUpdate('Group')
     group = await ctrl.keycloak.readGroup(ctrl.tenant, groupId)
@@ -296,7 +314,7 @@ async def update_group_acl(token: AUTH_HEADER, groupId:str, accessControlList:li
     return accessControlList
 
 
-@api.put(f'{ctrl.uriver}/groups/{{groupId}}/users', tags=['Group'])
+@api.put(f'{ctrl.uriver}/group/{{groupId}}/user', tags=['Group'])
 async def update_group_users(token: AUTH_HEADER, groupId:str, users:list[User]) -> list[User]:
     (await ctrl.getAuthInfo(token)).checkUpdate('Group')
     news, dels = getNewsAndDelsArray(
@@ -314,7 +332,7 @@ async def update_group_users(token: AUTH_HEADER, groupId:str, users:list[User]) 
     return users
 
 
-@api.delete(f'{ctrl.uriver}/groups/{{groupId}}', tags=['Group'])
+@api.delete(f'{ctrl.uriver}/group/{{groupId}}', tags=['Group'])
 async def delete_group(token: AUTH_HEADER, groupId:str) -> ModelStatus:
     (await ctrl.getAuthInfo(token)).checkDelete('Group')
     group = await ctrl.keycloak.readGroup(ctrl.tenant, groupId)
