@@ -148,7 +148,7 @@ class SessionControl(BaseControl):
         await self.accountCache.disconnect()
 
     async def getSystemToken(self):
-        systemToken = self.accountCache.read('systemToken')
+        systemToken = await self.accountCache.read('systemToken')
         if systemToken: return systemToken
         raise EpException(500, 'Internal Server Error')
 
