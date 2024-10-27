@@ -133,7 +133,7 @@ class SessionControl(BaseControl):
 
     def __init__(self, path:str, accountCacheDriver:Any):
         BaseControl.__init__(self, path)
-        accConf = self.config[self.defConf['account_module']]
+        accConf = self.config['account']
         accHostname = accConf['hostname']
         accHostport = accConf['hostport']
         self.accountBaseUrl = f'http://{accHostname}:{accHostport}/{accHostname}/v{self.version}'
