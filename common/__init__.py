@@ -9,7 +9,7 @@ except: pass
 #===============================================================================
 # Import
 #===============================================================================
-from .auth import LoginRequest, UserInfo, AuthInfo, User, Group, AccessControl
+from .auth import SystemToken, LoginRequest, UserInfo, AuthInfo, User, Group, AccessControl
 
 from .constants import AUTH_HEADER, TEST_HEADER, SECONDS, CRUD, LAYER, AAA
 

@@ -9,315 +9,473 @@ except: pass
 #===============================================================================
 # Import
 #===============================================================================
-import re
-import uuid
-import base64
-from common import getRandomString, ModelControl, AsyncRest, EpException
-from driver.keyclock import KeyCloak
-from driver.redis import RedisAccount
-from schema.aria import Endpoint
+import json
+from uuid import UUID, uuid4
+from time import time as tstamp
+from urllib.parse import urlencode
+from typing import Annotated, Callable, TypeVar, Any, Literal
+from pydantic import BaseModel, PlainSerializer, ConfigDict
+from luqum.parser import parser as parseLucene
+from stringcase import snakecase, pathcase, titlecase
+from .constants import CRUD, LAYER, AAA
+from .exceptions import EpException
+from .interfaces import AsyncRest
+from .utils import getEnvironment
 
 
 #===============================================================================
-# Implement
+# Interfaces
 #===============================================================================
-class Control(ModelControl):
+class Search:
 
-    def __init__(self, path):
-        ModelControl.__init__(self, path, RedisAccount)
+    def __init__(
+        self,
+        filter:Any | None=None,
+        orderBy:str | None=None,
+        order:str | None=None,
+        size:int | None=None,
+        skip:int | None=None,
+    ):
+        self.filter = filter
+        self.orderBy = orderBy
+        self.order = order
+        self.size = size
+        self.skip = skip
 
-        self.operaClientId = self.endpoint.replace('.', '-')
-        self.operaHomeUrl = f'https://{self.endpoint}'
-        self.operaLoginUri = f'{self.uriver}/auth/login'
-        self.operaRedirectUri = f'{self.uriver}/auth/callback'
-        self.operaRedirectUrl = f'https://{self.endpoint}{self.operaRedirectUri}'
 
-        self.vidmHostname = self.config['aria']['vidm_hostname']
-        self.vidmClientId = self.config['aria']['vidm_client_id']
-        self.vidmClientSecret = self.config['aria']['vidm_client_secret']
-        self.vidmBaseUrl = f'https://{self.vidmHostname}'
-        self.vidmAdminHeaders = {'Authorization': 'Basic ' + base64.b64encode(f'{self.vidmClientId}:{self.vidmClientSecret}'.encode('ascii')).decode('ascii')}
+class Option(dict):
 
-        self.aaClientPrefix = self.config['aria']['aa_client_prefix']
-        self.aaMap = {}
+    def __init__(self, **kargs): dict.__init__(self, **kargs)
 
-    async def startup(self):
-        await self.registerModel(Endpoint, 'uerp')
-        await self.initAriaBackends()
 
-    def generateUuid4(self): return str(uuid.uuid4())
+#===============================================================================
+# Fields
+#===============================================================================
+ID = Annotated[UUID, PlainSerializer(lambda x: str(x), return_type=str)]
+Key = Annotated[str, 'keyword']
 
-    async def initAriaBackends(self):
-        async with AsyncRest(self.vidmBaseUrl) as req:
-            vidmAccessToken = (await req.post('/SAAS/auth/oauthtoken?grant_type=client_credentials', headers=self.vidmAdminHeaders))['access_token']
-            vidmBearerToken = f'Bearer {vidmAccessToken}'
-            headers = {'Authorization': vidmBearerToken}
 
-            vidmOperaClient = None
-            vidmAaClientIds = []
-            for client in (await req.get('/SAAS/jersey/manager/api/oauth2clients', headers=headers))['items']:
-                clientId = client['clientId']
-                if self.endpoint == clientId: vidmOperaClient = client
-                elif self.aaClientPrefix in clientId and client['scope'] == 'user openid email profile': vidmAaClientIds.append(client['clientId'])
+#===============================================================================
+# Pre-Defined Models
+#===============================================================================
+class ServiceHealth(BaseModel):
 
-            if not vidmOperaClient:
-                keycloak = KeyCloak(self)
-                await keycloak.initialize()
+    title:str = ''
+    status:str = ''
+    healthy:bool = False
+    detail:dict = {}
 
-                async with AsyncRest(keycloak.kcBaseUrl) as req: kcIdpMetadata = await req.get(f'/realms/{self.tenant}/protocol/saml/descriptor')
-                if not kcIdpMetadata: raise EpException(500, 'Internal Server Error')
 
-                await keycloak.post(f'/admin/realms/{self.tenant}/client-scopes', {
-                    'name': 'vidm-scope',
-                    'description': 'vidm-scope',
-                    'type': 'default',
-                    'protocol': 'saml',
-                    'attributes': {
-                        'consent.screen.text': '',
-                        'display.on.consent.screen': True,
-                        'include.in.token.scope': True,
-                        'gui.order': ''
-                    }
-                })
-                for scope in await keycloak.get(f'/admin/realms/{self.tenant}/client-scopes'):
-                    if scope['name'] == 'vidm-scope': scopeId = scope['id']; break
-                else: raise EpException(404, 'Could not find client scope')
-                await keycloak.post(f'/admin/realms/{self.tenant}/client-scopes/{scopeId}/protocol-mappers/models', {
-                    'name': 'userName',
-                    'protocol': 'saml',
-                    'protocolMapper': 'saml-user-property-mapper',
-                    'config': {
-                        'friendly.name': 'userName',
-                        'attribute.name': 'userName',
-                        'attribute.nameformat': 'Basic',
-                        'user.attribute': 'username'
-                    }
-                })
-                await keycloak.post(f'/admin/realms/{self.tenant}/client-scopes/{scopeId}/protocol-mappers/models', {
-                    'name': 'email',
-                    'protocol': 'saml',
-                    'protocolMapper': 'saml-user-property-mapper',
-                    'config': {
-                        'friendly.name': 'email',
-                        'attribute.name': 'email',
-                        'attribute.nameformat': 'Basic',
-                        'user.attribute': 'email'
-                    }
-                })
-                await keycloak.post(f'/admin/realms/{self.tenant}/client-scopes/{scopeId}/protocol-mappers/models', {
-                    'name': 'surname',
-                    'protocol': 'saml',
-                    'protocolMapper': 'saml-user-property-mapper',
-                    'config': {
-                        'friendly.name': 'surname',
-                        'attribute.name': 'lastName',
-                        'attribute.nameformat': 'Basic',
-                        'user.attribute': 'lastName'
-                    }
-                })
-                await keycloak.post(f'/admin/realms/{self.tenant}/client-scopes/{scopeId}/protocol-mappers/models', {
-                    'name': 'givenName',
-                    'protocol': 'saml',
-                    'protocolMapper': 'saml-user-property-mapper',
-                    'config': {
-                        'friendly.name': 'givenName',
-                        'attribute.name': 'firstName',
-                        'attribute.nameformat': 'Basic',
-                        'user.attribute': 'firstName'
-                    }
-                })
+class Reference(BaseModel):
 
-                await keycloak.post(f'/admin/realms/{self.tenant}/clients', {
-                    'clientId': f'https://{self.vidmHostname}/SAAS/API/1.0/GET/metadata/sp.xml',
-                    'name': 'vidm',
-                    'description': 'vidm',
-                    'protocol': 'saml',
-                    'publicClient': True,
-                    'rootUrl': f'https://{self.vidmHostname}',
-                    'baseUrl': f'https://{self.vidmHostname}',
-                    'adminUrl': f'https://{self.vidmHostname}/SAAS/auth/saml/response',
-                    'redirectUris': ['*'],
-                    'authorizationServicesEnabled': False,
-                    'serviceAccountsEnabled': False,
-                    'implicitFlowEnabled': False,
-                    'directAccessGrantsEnabled': True,
-                    'standardFlowEnabled': True,
-                    'frontchannelLogout': True,
-                    'alwaysDisplayInConsole': True,
-                    'attributes': {
-                        'saml_idp_initiated_sso_url_name': '',
-                        'saml_idp_initiated_sso_relay_state': '',
-                        'post.logout.redirect.uris': '+'
-                    }
-                })
-                for client in await keycloak.get(f'/admin/realms/{self.tenant}/clients'):
-                    if client['name'] == 'vidm':
-                        clientId = client['id'];
-                        client['frontchannelLogout'] = False
-                        client['attributes']['saml.client.signature'] = 'false'
-                        client['attributes']['saml.server.signature.keyinfo.xmlSigKeyInfoKeyNameTransformer'] = 'KEY_ID'
-                        client['attributes']['saml.encrypt'] = 'false'
-                        client['attributes']['logoUri'] = ''
-                        client['attributes']['policyUri'] = ''
-                        client['attributes']['tosUri'] = ''
-                        client['attributes']['saml_assertion_consumer_url_post'] = f'https://{self.vidmHostname}/SAAS/auth/saml/response'
-                        client['attributes']['saml_assertion_consumer_url_redirect'] = f'https://{self.vidmHostname}/SAAS/auth/saml/response'
-                        client['attributes']['saml_single_logout_service_url_post'] = ''
-                        client['attributes']['saml_single_logout_service_url_redirect'] = ''
-                        client['attributes']['saml_single_logout_service_url_soap'] = ''
-                        client['attributes']['saml_single_logout_service_url_artifact'] = ''
-                        client['attributes']['saml_artifact_binding_url'] = ''
-                        client['attributes']['saml_artifact_resolution_service_url'] = ''
-                        client['attributes']['saml.assertion.lifespan'] = ''
-                        client['authenticationFlowBindingOverrides']['browser'] = ''
-                        await keycloak.put(f'/admin/realms/opera/clients/{clientId}', client)
-                        await keycloak.put(f'/admin/realms/opera/clients/{clientId}/default-client-scopes/{scopeId}', {})
-                        break
-                else: raise EpException(404, 'Could not find client')
+    id:Key = ''
+    sref:Key = ''
+    uref:Key = ''
 
-                secret = getRandomString(16)
-                async with AsyncRest(self.vidmBaseUrl) as req:
-                    vidmOperaClient = await req.post('/SAAS/jersey/manager/api/oauth2clients', headers={
-                        'Authorization': vidmBearerToken,
-                        'Content-Type': 'application/vnd.vmware.horizon.manager.oauth2client+json',
-                        'Accept': 'application/vnd.vmware.horizon.manager.oauth2client+json'
-                    }, json={
-                        'clientId': self.endpoint,
-                        'rememberAs': self.endpoint,
-                        'secret': secret,
-                        'redirectUri': self.operaRedirectUrl,
-                        'scope': 'email profile user openid',
-                        'authGrantTypes': 'authorization_code refresh_token',
-                        'tokenType': 'Bearer',
-                        'tokenLength': 32,
-                        'accessTokenTTL': 180,
-                        'refreshTokenTTL': 129600,
-                        'refreshTokenIdleTTL': 5760,
-                        'displayUserGrant': False,
-                        'internalSystemClient': False,
-                        'activationToken': None,
-                        'strData': None,
-                        'inheritanceAllowed': False,
-                        'returnFailureResponse': False
-                    })
+    async def readModel(self, token=None):
+        try: schema = getEnvironment(self.sref)
+        except: raise EpException(500, 'Internal Server Error')
+        schemaInfo = schema.getSchemaInfo()
+        if schemaInfo.provider:
+            if CRUD.checkRead(schemaInfo.crud):
+                if not token: token = await schemaInfo.control.getSystemToken()
+                headers = {'Authorization': f'{token.scheme} {token.credentials}'}
+                async with AsyncRest(schemaInfo.provider) as req: return schema(**(await req.get(f'{schemaInfo.path}/{self.id}', headers=headers)))
+            else: raise EpException(405, 'Method Not Allowed')
+        elif schemaInfo.control:
+            model = await schemaInfo.control.readModel(schemaInfo, self.id)
+            if model: return cls(**model)
+            else: raise EpException(404, 'Not Found')
+        else: raise EpException(501, 'Not Implemented')
 
-                    orgNetworks = (await req.get('/SAAS/jersey/manager/api/orgnetworks', headers={
-                        'Authorization': vidmBearerToken,
-                        'Accept': 'application/vnd.vmware.horizon.manager.orgnetwork.list+json'
-                    }))['items']
-                    for orgNetwork in orgNetworks:
-                        if orgNetwork['name'] == 'ALL RANGES':
-                            allRange = orgNetwork
-                            allRange.pop('_links')
-                            break
-                    else: raise Exception('could not find ALL RANGES org network in vidm')
 
-                    vidmJitDir = await req.post('/SAAS/jersey/manager/api/connectormanagement/directoryconfigs', headers={
-                        'Authorization': vidmBearerToken,
-                        'Content-Type': 'application/vnd.vmware.horizon.manager.connector.management.directory.jit+json',
-                        'Accept': 'application/vnd.vmware.horizon.manager.connector.management.directory.jit+json'
-                    }, json={
-                        'name': self.tenant,
-                        'domains': [self.domain]
-                    })
+class ModelStatus(BaseModel):
 
-                    await req.post('/SAAS/jersey/manager/api/identityProviders', headers={
-                        'Authorization': vidmBearerToken,
-                        'Content-Type': 'application/vnd.vmware.horizon.manager.external.identityprovider+json',
-                        'Accept': 'application/vnd.vmware.horizon.manager.external.identityprovider+json'
-                    }, json={
-                        'authMethods': [{
-                            'authMethodId': 0,
-                            'authScore': 1,
-                            'defaultMethod': False,
-                            'authMethodOrder': 0,
-                            'authMethodName': self.tenant,
-                            'samlAuthnContext': 'urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified'
-                        }],
-                        'identityProviderType': 'MANUAL',
-                        'nameIdFormatType': 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
-                        'friendlyName': self.tenant,
-                        'metaData': kcIdpMetadata,
-                        'preferredBinding': 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
-                        'jitEnabled': True,
-                        'directoryConfigurations': [{
-                            'type': 'JIT_DIRECTORY',
-                            'name': self.tenant,
-                            'directoryId': vidmJitDir['directoryConfigurationId'],
-                            'userstoreId': vidmJitDir['userStoreId'],
-                            'countDomains': 1,
-                            'deleteInProgress': False,
-                            'syncConfigurationEnabled': False
-                        }],
-                        'customAttributeMappings': None,
-                        'nameIdFormatAttributeMappings': {
-                            'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified': 'userName',
-                            'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress': 'emails',
-                            'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent': 'id',
-                            'urn:oasis:names:tc:SAML:2.0:nameid-format:transient': 'userName'
-                        },
-                        'orgNetworks': [allRange],
-                        'description': '',
-                        'nIDPStatus': 1,
-                        'idpURL': None,
-                        'name': self.tenant
-                    })
-            else:
-                async with AsyncRest(self.vidmBaseUrl) as req:
-                    vidmOperaClient = await req.get(f'/SAAS/jersey/manager/api/oauth2clients/{vidmOperaClient["clientId"]}', headers=headers)
-            self.vidmOperaSecret = vidmOperaClient['secret']
-            self.vidmOperaHeaders = {
-                'Authorization': 'Basic ' + base64.b64encode(f'{self.endpoint}:{self.vidmOperaSecret}'.encode('ascii')).decode('ascii')
-            }
+    id:Key = ''
+    sref:Key = ''
+    uref:Key = ''
+    status:str = ''
 
-            async with AsyncRest(self.vidmBaseUrl) as req:
-                for clientId in vidmAaClientIds:
-                    client = await req.get(f'/SAAS/jersey/manager/api/oauth2clients/{clientId}', headers=headers)
-                    redirectUri = [redirectUri.strip() for redirectUri in client['redirectUri'].split(',')][0]
-                    hostname = re.match('^https:\/\/(?P<hostName>[^\/]+)\/', redirectUri)['hostName']
-                    self.aaMap[hostname] = {
-                        'clientId': clientId,
-                        'redirectUri': redirectUri
-                    }
 
-    def login(self):
-        return f'https://{self.vidmHostname}/SAAS/auth/oauth2/authorize?domain={self.domain}&response_type=code&state={self.generateUuid4()}&client_id={self.endpoint}&redirect_uri={self.operaRedirectUrl}'
+class ModelCount(BaseModel):
 
-    async def authorize(self, code:str, state:str, userstore:str):
-        async with AsyncRest(self.vidmBaseUrl) as req:
-            vidmTokens = await req.post(f'/SAAS/auth/oauthtoken?grant_type=authorization_code&code={code}&redirect_uri={self.operaRedirectUrl}', headers=self.vidmOperaHeaders)
-        vidmAccessToken = vidmTokens['access_token']
-        regions = []
-        async with AsyncRest(self.vidmBaseUrl) as req:
-            for hostname, client in self.aaMap.items():
-                clientId = client['clientId']
-                redirectUri = client['redirectUri']
-                state = base64.b64encode(f'https://{hostname}/identity/api/access-token'.encode('ascii')).decode('ascii')
-                try:
-                    aaAccessToken = (await req.get(f'/SAAS/auth/oauth2/authorize?response_type=code&client_id={clientId}&redirect_uri={redirectUri}&state={state}', headers={
-                        'Authorization': f'Bearer {vidmAccessToken}'
-                    }))['access_token']
-                    async with AsyncRest(f'https://{hostname}') as req:
-                        res = await req.get('/userprofile/api/branding/byservice/cloud_assembly', {
-                            'Authorization': f'Bearer {aaAccessToken}',
-                            'Accept': 'application/json'
-                        })
-                        if res['content'] and 'serviceName' in res['content'][0]: branding = res['content'][0]['serviceName']
-                        else: branding = hostname
-                except: branding = None
-                regions.append({
-                    'name': branding if branding else hostname,
-                    'hostname': hostname,
-                    'accessToken': aaAccessToken if branding else '',
-                    'status': True if branding else False
-                })
-        endpoint = await Endpoint(**{
-            'vidm': {
-                'hostname': self.vidmHostname,
-                'accessToken': vidmAccessToken,
-                'refreshToken': vidmTokens['refresh_token']
-            },
-            'regions': regions
-        }).createModel()
-        return endpoint.id
+    sref:Key = ''
+    uref:Key = ''
+    query:str = ''
+    result:int = 0
 
+
+#===============================================================================
+# Schema Info
+#===============================================================================
+class SchemaInfo(BaseModel):
+
+    ref:Any
+    name:str
+    description:str
+    module:str
+    tags:list[str]
+
+    service:str = ''
+    major:int = 1
+    minor:int = 1
+    control:Any | None = None
+    provider:str | None = None
+
+    sref:str = ''
+    dref:str = ''
+    path:str = ''
+
+    aaa:int = AAA.FREE
+    crud:int = CRUD.CRUD
+    layer:int = LAYER.CSD
+
+    cache:Any | None = None
+    search:Any | None = None
+    database:Any | None = None
+
+    createHandler:Any | None = None
+    updateHandler:Any | None = None
+    deleteHandler:Any | None = None
+
+
+_TypeT = TypeVar('_TypeT', bound=type)
+
+
+def SchemaConfig(
+    version:int,
+    description:str='',
+    aaa:int=AAA.FREE,
+    crud:int=CRUD.CRUD,
+    layer:int=LAYER.CSD,
+    cache:Option | None=None,
+    search:Option | None=None,
+    database:Option | None=None
+) -> Callable[[_TypeT], _TypeT]:
+
+    def inner(TypedDictClass: _TypeT, /) -> _TypeT:
+        if not issubclass(TypedDictClass, BaseSchema): raise Exception(f'{TypedDictClass} is not a BaseSchema')
+        ref = TypedDictClass
+        name = TypedDictClass.__name__
+        module = TypedDictClass.__module__
+        modsrt = module.replace('schema.', '')
+        sref = f'{modsrt}.{name}'
+        tags = [titlecase('.'.join(reversed(modsrt.lower().split('.'))))]
+        TypedDictClass.__pydantic_config__ = ConfigDict(
+            schemaInfo=SchemaInfo(
+                ref=ref,
+                name=name,
+                description=description,
+                module=module,
+                tags=tags,
+                minor=version,
+                sref=sref,
+                aaa=aaa,
+                crud=crud,
+                layer=layer,
+                cache=cache if cache else Option(),
+                search=search if search else Option(),
+                database=database if database else Option()
+            )
+        )
+        return TypedDictClass
+
+    return inner
+
+
+#===============================================================================
+# Schema Abstraction
+#===============================================================================
+class IdentSchema:
+
+    id:Key = ''
+    sref:Key = ''
+    uref:Key = ''
+
+    def setID(self, id:Key | None=None):
+        schemaInfo = self.__class__.getSchemaInfo()
+        self.id = id if id else str(uuid4())
+        self.sref = schemaInfo.sref
+        self.uref = f'{schemaInfo.path}/{self.id}'
+        return self
+
+    def getReference(self):
+        return Reference(id=self.id, sref=self.sref, uref=self.uref)
+
+
+class StatusSchema:
+
+    owner:Key = ''
+    deleted:bool = False
+    tstamp:int = 0
+
+    def updateStatus(self, owner=None):
+        if owner: self.owner = owner
+        self.tstamp = int(tstamp())
+        return self
+
+    def setDeleted(self):
+        self.deleted = True
+        self.tstamp = int(tstamp())
+        return self
+
+
+class BaseSchema(StatusSchema, IdentSchema):
+
+    #===========================================================================
+    # schema info
+    #===========================================================================
+    @classmethod
+    def setSchemaInfo(cls, service, version, control=None, provider=None, createHandler=None, updateHandler=None, deleteHandler=None):
+        schemaInfo = cls.getSchemaInfo()
+        schemaInfo.service = service
+        schemaInfo.major = version
+        schemaInfo.control = control
+        schemaInfo.provider = provider
+        lowerSchemaRef = schemaInfo.sref.lower()
+        schemaInfo.dref = snakecase(f'{lowerSchemaRef}.{version}.{schemaInfo.minor}')
+        schemaInfo.path = f'/{service}/v{version}/{pathcase(lowerSchemaRef)}'
+        if createHandler: schemaInfo.createHandler = createHandler
+        if updateHandler: schemaInfo.updateHandler = updateHandler
+        if deleteHandler: schemaInfo.deleteHandler = deleteHandler
+        if '__pydantic_config__' not in Reference.__dict__: Reference.__pydantic_config__ = ConfigDict(schemaMap={})
+        Reference.__pydantic_config__['schemaMap'][schemaInfo.sref] = cls
+
+    @classmethod
+    def getSchemaInfo(cls): return cls.__pydantic_config__['schemaInfo']
+
+    #===========================================================================
+    # crud
+    #===========================================================================
+    async def readModel(
+        self,
+        token=None
+    ):
+        id = str(self.id)
+        if not self.id: raise EpException(400, 'Bad Request')
+        schemaInfo = self.__class__.getSchemaInfo()
+        if schemaInfo.provider:
+            if CRUD.checkRead(schemaInfo.crud):
+                if not token: token = await schemaInfo.control.getSystemToken()
+                headers = {'Authorization': f'{token.scheme} {token.credentials}'}
+                async with AsyncRest(schemaInfo.provider) as req: return schemaInfo.ref(**(await req.get(self.uref, headers=headers)))
+            else: raise EpException(405, 'Method Not Allowed')
+        elif schemaInfo.control:
+            model = await schemaInfo.control.readModel(schemaInfo, id)
+            if model: return schemaInfo.ref(**model)
+            else: raise EpException(404, 'Not Found')
+        else: raise EpException(501, 'Not Implemented')
+
+    @classmethod
+    async def readModelByID(
+        cls,
+        id:Key,
+        token=None
+    ):
+        id = str(id)
+        schemaInfo = cls.getSchemaInfo()
+        if schemaInfo.provider:
+            if CRUD.checkRead(schemaInfo.crud):
+                if not token: token = await schemaInfo.control.getSystemToken()
+                headers = {'Authorization': f'{token.scheme} {token.credentials}'}
+                async with AsyncRest(schemaInfo.provider) as req: return cls(**(await req.get(f'{schemaInfo.path}/{id}', headers=headers)))
+            else: raise EpException(405, 'Method Not Allowed')
+        elif schemaInfo.control:
+            model = await schemaInfo.control.readModel(schemaInfo, id)
+            if model: return cls(**model)
+            else: raise EpException(404, 'Not Found')
+        else: raise EpException(501, 'Not Implemented')
+
+    @classmethod
+    async def searchModels(cls,
+        filter:str | None=None,
+        orderBy:str | None=None,
+        order:Literal['asc', 'desc']=None,
+        size:int | None=None,
+        skip:int | None=None,
+        archive:bool | None=None,
+        token=None
+    ):
+        schemaInfo = cls.getSchemaInfo()
+        if schemaInfo.provider:
+            if CRUD.checkRead(schemaInfo.crud):
+                if not token: token = await schemaInfo.control.getSystemToken()
+                headers = {'Authorization': f'{token.scheme} {token.credentials}'}
+                query = {}
+                if filter: query['$filter'] = filter
+                if orderBy and order:
+                    query['$orderby'] = orderBy
+                    query['$order'] = order
+                if size: query['$size'] = size
+                if skip: query['$skip'] = skip
+                if archive: query['$archive'] = 'true'
+                url = f'{schemaInfo.path}?{urlencode(query)}' if query else schemaInfo.path
+                async with AsyncRest(schemaInfo.provider) as req: models = await req.get(url, headers=headers)
+                return [cls(**model) for model in models]
+            else: raise EpException(405, 'Method Not Allowed')
+        elif schemaInfo.control:
+            if filter: filter = parseLucene.parse(filter)
+            models = await schemaInfo.control.searchModels(schemaInfo, Search(filter=filter, orderBy=orderBy, order=order, size=size, skip=skip), archive)
+            return [cls(**model) for model in models]
+        else: raise EpException(501, 'Not Implemented')
+
+    @classmethod
+    async def countModels(cls,
+        filter:str | None=None,
+        archive:bool | None=None,
+        token=None
+    ):
+        schemaInfo = cls.getSchemaInfo()
+        if schemaInfo.provider:
+            if CRUD.checkRead(schemaInfo.crud):
+                if not token: token = await schemaInfo.control.getSystemToken()
+                headers = {'Authorization': f'{token.scheme} {token.credentials}'}
+                query = {}
+                if filter: query['$filter'] = filter
+                if archive: query['$archive'] = 'true'
+                url = f'{schemaInfo.path}/count?{urlencode(query)}' if query else f'{schemaInfo.path}/count'
+                async with AsyncRest(schemaInfo.provider) as req: count = await req.get(url, headers=headers)
+                return ModelCount(**count)
+            else: raise EpException(405, 'Method Not Allowed')
+        elif schemaInfo.control:
+            if filter: filter = parseLucene.parse(filter)
+            return await schemaInfo.control.countModels(schemaInfo, Search(filter=filter), archive)
+        else: raise EpException(501, 'Not Implemented')
+
+    async def createModel(
+        self,
+        group=None,
+        token=None
+    ):
+        schemaInfo = self.__class__.getSchemaInfo()
+        if schemaInfo.provider:
+            if CRUD.checkCreate(schemaInfo.crud):
+                if not token: token = await schemaInfo.control.getSystemToken()
+                if schemaInfo.createHandler: await schemaInfo.createHandler(self, token)
+                headers = {'Authorization': f'{token.scheme} {token.credentials}'}
+                if group:
+                    async with AsyncRest(schemaInfo.provider) as req: model = await req.post(f'{schemaInfo.path}?$group={group}', headers=headers, json=self.model_dump())
+                else:
+                    async with AsyncRest(schemaInfo.provider) as req: model = await req.post(schemaInfo.path, headers=headers, json=self.model_dump())
+                return self.__class__(**model)
+            else: raise EpException(405, 'Method Not Allowed')
+        elif schemaInfo.control:
+            if group: await schemaInfo.control.createModel(schemaInfo, self.setID().updateStatus(group).model_dump())
+            else: await schemaInfo.control.createModel(schemaInfo, self.setID().updateStatus(schemaInfo.control.systemAccessKey).model_dump())
+            model = await schemaInfo.control.readModel(schemaInfo, str(self.id))
+            if model: return schemaInfo.ref(**model)
+            else: raise EpException(409, 'Conflict')
+        else: raise EpException(501, 'Not Implemented')
+
+    async def updateModel(
+        self,
+        token=None
+    ):
+        if not self.id: raise EpException(400, 'Bad Request')
+        id = str(self.id)
+        schemaInfo = self.__class__.getSchemaInfo()
+        if schemaInfo.provider:
+            if CRUD.checkUpdate(schemaInfo.crud):
+                if not token: token = await schemaInfo.control.getSystemToken()
+                if schemaInfo.updateHandler: await schemaInfo.updateHandler(self, await schemaInfo.ref.readModelByID(self.id), token)
+                headers = {'Authorization': f'{token.scheme} {token.credentials}'}
+                async with AsyncRest(schemaInfo.provider) as req: model = await req.put(f'{schemaInfo.path}/{id}', headers=headers, json=self.model_dump())
+                return self.__class__(**model)
+            else: raise EpException(405, 'Method Not Allowed')
+        elif schemaInfo.control:
+            await schemaInfo.control.updateModel(schemaInfo, self.updateStatus().model_dump())
+            model = await schemaInfo.control.readModel(schemaInfo, id)
+            if model: return schemaInfo.ref(**model)
+            else: raise EpException(409, 'Conflict')
+        else: raise EpException(501, 'Not Implemented')
+
+    async def deleteModel(
+        self,
+        token=None,
+        force=False
+    ):
+        if not self.id: raise EpException(400, 'Bad Request')
+        id = str(self.id)
+        schemaInfo = self.__class__.getSchemaInfo()
+        if schemaInfo.provider:
+            if CRUD.checkDelete(schemaInfo.crud):
+                if not token: token = await schemaInfo.control.getSystemToken()
+                if schemaInfo.deleteHandler: await schemaInfo.deleteHandler(self, token)
+                headers = {'Authorization': f'{token.scheme} {token.credentials}'}
+                force = '?$force=true' if force else ''
+                async with AsyncRest(schemaInfo.provider) as req: status = await req.delete(f'{schemaInfo.path}/{id}{force}', headers=headers)
+                return ModelStatus(**status)
+            else: raise EpException(405, 'Method Not Allowed')
+        elif schemaInfo.control:
+            await schemaInfo.control.deleteModel(schemaInfo, id, self.setDeleted().model_dump(), force)
+            return ModelStatus(id=id, sref=schemaInfo.sref, uref=f'{schemaInfo.path}/{id}', status='deleted')
+        else: raise EpException(501, 'Not Implemented')
+
+    @classmethod
+    async def deleteModelByID(
+        cls,
+        id:Key,
+        token=None,
+        force=False
+    ):
+        id = str(id)
+        schemaInfo = cls.getSchemaInfo()
+        if schemaInfo.provider:
+            if CRUD.checkDelete(schemaInfo.crud):
+                if not token: token = await schemaInfo.control.getSystemToken()
+                headers = {'Authorization': f'{token.scheme} {token.credentials}'}
+                force = '?$force=true' if force else ''
+                async with AsyncRest(schemaInfo.provider) as req: status = await req.delete(f'{schemaInfo.path}/{id}{force}', headers=headers)
+                return ModelStatus(**status)
+            else: raise EpException(405, 'Method Not Allowed')
+        elif schemaInfo.control:
+            await schemaInfo.control.deleteModel(schemaInfo, id, (await schemaInfo.control.readModel(schemaInfo, id)).setDeleted().model_dump(), force)
+            return ModelStatus(id=id, sref=schemaInfo.sref, uref=f'{schemaInfo.path}/{id}', status='deleted')
+        else: raise EpException(501, 'Not Implemented')
+
+
+class ProfSchema:
+
+    name:Key = ''
+    displayName:str = ''
+    description:str = ''
+
+
+class TagSchema:
+
+    tags:list[str] = []
+
+    def setTag(self, tag):
+        if tag not in self.tags: self.tags.append(tag)
+        return self
+
+    def delTag(self, tag):
+        if tag in self.tags: self.tags.pop(tag)
+        return self
+
+
+class MetaSchema:
+
+    metadata:str = '{}'
+
+    def getMeta(self, key):
+        metadata = self.getMetadata()
+        if key in metadata: return metadata[key]
+        else: None
+
+    def setMeta(self, key, value):
+        metadata = self.getMetadata()
+        if key in metadata:
+            preval = metadata[key]
+            if isinstance(preval, list): preval.append(value)
+            else: preval = [preval, value]
+            metadata[key] = preval
+        else: metadata[key] = value
+        self.setMetadata(**metadata)
+        return self
+
+    def getMetadata(self): return json.loads(self.metadata)
+
+    def setMetadata(self, **metadata):
+        self.metadata = json.dumps(metadata, separators=(',', ':'))
+        return self

@@ -9,7 +9,7 @@ except: pass
 #===============================================================================
 # Import
 #===============================================================================
-from common import mergeArray, runBackground, asleep, BaseControl, AuthInfo
+from common import mergeArray, runBackground, asleep, BaseControl, AuthInfo, EpException
 from driver.keyclock import KeyCloak
 from driver.redis import RedisAccount
 from driver.minio import Minio
@@ -52,11 +52,13 @@ class Control(BaseControl):
     async def __syncSystemToken__(self):
         tokens = None
         while True:
-            if tokens:
-                try: tokens = await self.keycloak.loginByRefreshToken(self.tenant, self.tenant, tokens['refresh_token'])
-                except: tokens = await self.keycloak.login(self.tenant, self.tenant, self.systemAccessKey, self.systemSecretKey)
-            else: tokens = await self.keycloak.login(self.tenant, self.tenant, self.systemAccessKey, self.systemSecretKey)
-            await self.redis.write('systemToken', tokens['access_token'])
+            try:
+                if tokens:
+                    try: tokens = await self.keycloak.loginByRefreshToken(self.tenant, self.tenant, tokens['refresh_token'])
+                    except: tokens = await self.keycloak.login(self.tenant, self.tenant, self.systemAccessKey, self.systemSecretKey)
+                else: tokens = await self.keycloak.login(self.tenant, self.tenant, self.systemAccessKey, self.systemSecretKey)
+                await self.redis.setSystemToken(tokens['access_token'])
+            except Exception as e: EpException(500, e)
             await asleep(600)
 
     async def login(self, username:str, password:str):

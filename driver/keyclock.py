@@ -297,6 +297,38 @@ class KeyCloak(DriverBase):
         else: raise EpException(404, 'Not Found')
         await self.put(f'/admin/realms/{realmId}/clients/{clientId}/default-client-scopes/{scopeId}', {})
 
+        if self.control.stage == 'dev':
+            # add openid client
+            devClientId = f'{realmId}-dev'
+            await self.post(f'/admin/realms/{realmId}/clients', {
+                'clientId': devClientId,
+                'name': devClientId,
+                'description': devClientId,
+                'protocol': 'openid-connect',
+                'publicClient': True,
+                'rootUrl': 'https://localhost',
+                'baseUrl': 'https://localhost',
+                'redirectUris': ['*'],
+                'webOrigins': self.control.origins if self.control.origins else ['https://localhost'],
+                'authorizationServicesEnabled': False,
+                'serviceAccountsEnabled': False,
+                'implicitFlowEnabled': False,
+                'directAccessGrantsEnabled': True,
+                'standardFlowEnabled': True,
+                'frontchannelLogout': True,
+                'alwaysDisplayInConsole': True,
+                'attributes': {
+                    'saml_idp_initiated_sso_url_name': '',
+                    'oauth2.device.authorization.grant.enabled': False,
+                    'oidc.ciba.grant.enabled': False,
+                    'post.logout.redirect.uris': '+'
+                }
+            })
+            for client in await self.get(f'/admin/realms/{realmId}/clients'):
+                if client['clientId'] == devClientId: clientId = client['id']; break
+            else: raise EpException(404, 'Not Found')
+            await self.put(f'/admin/realms/{realmId}/clients/{clientId}/default-client-scopes/{scopeId}', {})
+
         # add guacamole client
         await self.post(f'/admin/realms/{realmId}/clients', {
             'clientId': 'guacamole',

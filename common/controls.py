@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from aiohttp.client_exceptions import ClientResponseError
 from luqum.parser import parser as parseLucene
-from .auth import AuthInfo
+from .auth import SystemToken, AuthInfo
 from .constants import CRUD, LAYER, AAA, AUTH_HEADER
 from .exceptions import EpException
 from .interfaces import AsyncRest
@@ -148,13 +148,13 @@ class SessionControl(BaseControl):
         await self.accountCache.disconnect()
 
     async def getSystemToken(self):
-        systemToken = await self.accountCache.read('systemToken')
-        if systemToken: return systemToken
+        systemToken = await self.accountCache.getSystemToken()
+        if systemToken: return SystemToken(credentials=systemToken)
         raise EpException(500, 'Internal Server Error')
 
     async def getClientSecret(self, clientId:str) -> str:
-        systemToken = await self.getSystemToken()
-        async with AsyncRest(self.accountBaseUrl) as req: return await req.get(f'/client/{clientId}/secret', headers={'Authorization': f'Bearer {systemToken}'})
+        token = await self.getSystemToken()
+        async with AsyncRest(self.accountBaseUrl) as req: return await req.get(f'/client/{clientId}/secret', headers={'Authorization': f'{token.scheme} {token.credentials}'})
 
     async def checkBearerToken(self, bearerToken:str) -> AuthInfo:
         authInfo = await self.accountCache.read(bearerToken)
@@ -301,7 +301,7 @@ class ModelControl(SessionControl):
     ):
         try:
             schemaInfo = self.schemaInfoMap[request.scope['path']]
-            await schemaInfo.createHandler(model)
+            await schemaInfo.createHandler(model, None)
             async with AsyncRest(schemaInfo.provider) as req:
                 return await req.post(
                     f"{schemaInfo.path}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
@@ -343,7 +343,7 @@ class ModelControl(SessionControl):
         try:
             schemaInfo = self.schemaInfoMap[request.scope['path'].replace(f'/{id}', '')]
             origin = await schemaInfo.ref.readModelByID(id)
-            await schemaInfo.updateHandler(model, origin)
+            await schemaInfo.updateHandler(model, origin, None)
             async with AsyncRest(schemaInfo.provider) as req:
                 return await req.put(
                     f"{origin.uref}{'?$publish=true' if publish == '' or publish == 'true' else ''}",
@@ -382,7 +382,7 @@ class ModelControl(SessionControl):
         try:
             schemaInfo = self.schemaInfoMap[request.scope['path'].replace(f'/{id}', '')]
             model = await schemaInfo.ref.readModelByID(id)
-            await schemaInfo.deleteHandler(model)
+            await schemaInfo.deleteHandler(model, None)
             query = f'?{request.scope["query_string"].decode("latin-1")}' if request.scope['query_string'] else ''
             async with AsyncRest(schemaInfo.provider) as req:
                 return await req.delete(f'{model.uref}{query}')
@@ -461,24 +461,29 @@ class UerpControl(SessionControl):
             if AAA.checkAuthorization(schemaInfo.aaa):
                 if AAA.checkAuthentication(schemaInfo.aaa):
                     if AAA.checkAccount(schemaInfo.aaa):
-                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuthnUser, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
-                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuthnUser, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
+                        if LAYER.checkSearch(schemaInfo.layer) or LAYER.checkDatabase(schemaInfo.layer):
+                            self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuthnUser, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
+                            self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuthnUser, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
                         self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.readModelByAuthnUser, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
                     elif AAA.checkGroup(schemaInfo.aaa):
-                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuthnGroup, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
-                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuthnGroup, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
+                        if LAYER.checkSearch(schemaInfo.layer) or LAYER.checkDatabase(schemaInfo.layer):
+                            self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuthnGroup, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
+                            self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuthnGroup, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
                         self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.readModelByAuthnGroup, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
                     else:
-                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuthn, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
-                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuthn, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
+                        if LAYER.checkSearch(schemaInfo.layer) or LAYER.checkDatabase(schemaInfo.layer):
+                            self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuthn, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
+                            self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuthn, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
                         self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.readModelByAuthn, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
                 else:
-                    self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuth, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
-                    self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuth, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
+                    if LAYER.checkSearch(schemaInfo.layer) or LAYER.checkDatabase(schemaInfo.layer):
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAuth, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
+                        self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAuth, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
                     self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.readModelByAuth, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
             else:
-                self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAnony, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
-                self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAnony, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
+                if LAYER.checkSearch(schemaInfo.layer) or LAYER.checkDatabase(schemaInfo.layer):
+                    self.api.add_api_route(methods=['GET'], path=schemaInfo.path, endpoint=self.searchModelsByAnony, response_model=List[schema], tags=schemaInfo.tags, name=f'Search {schemaInfo.name}')
+                    self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/count', endpoint=self.countModelsByAnony, response_model=ModelCount, tags=schemaInfo.tags, name=f'Count {schemaInfo.name}')
                 self.api.add_api_route(methods=['GET'], path=schemaInfo.path + '/{id}', endpoint=self.readModelByAnony, response_model=schema, tags=schemaInfo.tags, name=f'Read {schemaInfo.name}')
 
         if CRUD.checkCreate(schemaInfo.crud):
@@ -690,7 +695,9 @@ class UerpControl(SessionControl):
         if '$skip' in query: query.pop('$skip')
         if '$archive' in query: query.pop('$archive')
         if orderBy and not order: order = 'desc'
-        if authInfo.checkAdmin(): groups = ''
+        if authInfo.checkAdmin():
+            if group: groups = ' OR '.join([f'owner:{gid}' for gid in group])
+            else: groups = ''
         elif not authInfo.groups: raise EpException(403, 'Forbidden')
         elif group: groups = ' OR '.join([f'owner:{authInfo.checkOnlyGroup(gid)}' for gid in group])
         else: groups = ' OR '.join([f'owner:{gid}' for gid in authInfo.groups])
@@ -922,7 +929,9 @@ class UerpControl(SessionControl):
         if '$group' in query: query.pop('$group')
         if '$filter' in query: query.pop('$filter')
         if '$archive' in query: query.pop('$archive')
-        if authInfo.checkAdmin(): groups = ''
+        if authInfo.checkAdmin():
+            if group: groups = ' OR '.join([f'owner:{gid}' for gid in group])
+            else: groups = ''
         elif not authInfo.groups: raise EpException(403, 'Forbidden')
         elif group: groups = ' OR '.join([f'owner:{authInfo.checkOnlyGroup(gid)}' for gid in group])
         else: groups = ' OR '.join([f'owner:{gid}' for gid in authInfo.groups])
@@ -1150,7 +1159,7 @@ class UerpControl(SessionControl):
         schemaInfo,
         data
     ):
-        if schemaInfo.createHandler: data = await schemaInfo.createHandler(data)
+        if schemaInfo.createHandler: await schemaInfo.createHandler(data)
         if LAYER.checkDatabase(schemaInfo.layer):
             try: result = (await self.database.create(schemaInfo, data))[0]
             except LookupError: raise EpException(400, 'Bad Request')
@@ -1188,7 +1197,7 @@ class UerpControl(SessionControl):
         origin = await self.readModel(schemaInfo, id)
         owner = origin['owner']
         authInfo.checkUsername(owner)
-        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(owner).model_dump())
+        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(owner).model_dump(), origin)
         await self.publishToRouter(publish, 'user', owner, 'updated', data)
         return data
 
@@ -1205,7 +1214,7 @@ class UerpControl(SessionControl):
         origin = await self.readModel(schemaInfo, id)
         owner = origin['owner']
         authInfo.checkGroup(owner)
-        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(owner).model_dump())
+        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(owner).model_dump(), origin)
         await self.publishToRouter(publish, 'group', owner, 'updated', data)
         return data
 
@@ -1220,7 +1229,7 @@ class UerpControl(SessionControl):
         schemaInfo = model.__class__.getSchemaInfo()
         await self.checkUpdatable(token, schemaInfo.sref)
         origin = await self.readModel(schemaInfo, id)
-        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(origin['owner']).model_dump())
+        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(origin['owner']).model_dump(), origin)
         await self.publishToRouter(publish, 'group', self.userRoleName, 'updated', data)
         return data
 
@@ -1235,7 +1244,7 @@ class UerpControl(SessionControl):
         schemaInfo = model.__class__.getSchemaInfo()
         await self.checkAuthorization(token)
         origin = await self.readModel(schemaInfo, id)
-        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(origin['owner']).model_dump())
+        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(origin['owner']).model_dump(), origin)
         await self.publishToRouter(publish, 'group', self.userRoleName, 'updated', data)
         return data
 
@@ -1248,16 +1257,17 @@ class UerpControl(SessionControl):
         id = str(id)
         schemaInfo = model.__class__.getSchemaInfo()
         origin = await self.readModel(schemaInfo, id)
-        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(origin['owner']).model_dump())
+        data = await self.updateModel(schemaInfo, model.setID(id).updateStatus(origin['owner']).model_dump(), origin)
         await self.publishToRouter(publish, 'group', self.userRoleName, 'updated', data)
         return data
 
     async def updateModel(
         self,
         schemaInfo,
-        data
+        data,
+        origin
     ):
-        if schemaInfo.updateHandler: data = await schemaInfo.updateHandler(data)
+        if schemaInfo.updateHandler: await schemaInfo.updateHandler(data, origin)
         if LAYER.checkDatabase(schemaInfo.layer):
             try: result = (await self.database.update(schemaInfo, data))[0]
             except LookupError: raise EpException(400, 'Bad Request')
@@ -1396,7 +1406,7 @@ class UerpControl(SessionControl):
         data,
         force
     ):
-        if schemaInfo.deleteHandler: data = await schemaInfo.deleteHandler(data)
+        if schemaInfo.deleteHandler: await schemaInfo.deleteHandler(data)
         if force and LAYER.checkDatabase(schemaInfo.layer):
             try: result = await self.database.delete(schemaInfo, id)
             except LookupError: raise EpException(400, 'Bad Request')

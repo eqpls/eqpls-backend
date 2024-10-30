@@ -30,12 +30,16 @@ client = docker.from_env()
 defconf = config['default']
 
 tenant = defconf['tenant']
+endpoint = defconf['endpoint']
 version = defconf['version']
 stage = defconf['stage']
 
 health_check_interval = defconf['health_check_interval']
 health_check_timeout = defconf['health_check_timeout']
 health_check_retries = defconf['health_check_retries']
+
+webConf = config['nginx']
+proxies = [proxy.strip() for proxy in webConf['proxies'].split(',')] if 'proxies' in webConf else []
 
 
 #===============================================================================
@@ -50,15 +54,61 @@ def deploy():
     try: os.mkdir(f'{path}/webself/conf.d')
     except: pass
 
+    locations = ['''
+location /auth/ {
+add_header 'Access-Control-Allow-Origin' '*';
+add_header 'Access-Control-Allow-Methods' '*';
+add_header 'Access-Control-Allow-Headers' '*';
+add_header 'Access-Control-Allow-Credentials' 'true';
+proxy_pass https://%s/auth/;
+}
+''' % endpoint, '''
+location /minio/ {
+add_header 'Access-Control-Allow-Origin' '*';
+add_header 'Access-Control-Allow-Methods' '*';
+add_header 'Access-Control-Allow-Headers' '*';
+add_header 'Access-Control-Allow-Credentials' 'true';
+proxy_pass https://%s/minio/;
+}
+''' % endpoint, '''
+location /guacamole/ {
+add_header 'Access-Control-Allow-Origin' '*';
+add_header 'Access-Control-Allow-Methods' '*';
+add_header 'Access-Control-Allow-Headers' '*';
+add_header 'Access-Control-Allow-Credentials' 'true';
+proxy_pass https://%s/guacamole/;
+}
+''' % endpoint]
+
+    for p in proxies:
+        locations.append('''
+location /%s/ {
+add_header 'Access-Control-Allow-Origin' '*';
+add_header 'Access-Control-Allow-Methods' '*';
+add_header 'Access-Control-Allow-Headers' '*';
+add_header 'Access-Control-Allow-Credentials' 'true';
+proxy_pass https://%s/%s/;
+}
+''' % (p, endpoint, p))
+
     with open(f'{path}/webself/conf.d/default.conf', 'w') as fd: fd.write(\
 '''
 server {
 listen 443 ssl;
 server_name localhost;
-location / { alias /webroot/; }
+
+%s
+
+location / {
+add_header 'Access-Control-Allow-Origin' '*';
+add_header 'Access-Control-Allow-Methods' '*';
+add_header 'Access-Control-Allow-Headers' '*';
+add_header 'Access-Control-Allow-Credentials' 'true';
+alias /webroot/;
+}
 }
 
-''')
+''' % ''.join(locations))
 
     options = {
         'detach': True,
@@ -69,7 +119,7 @@ location / { alias /webroot/; }
         'ports': {
             '443/tcp': ('0.0.0.0', '443')
         },
-        'volumes': [f'{os.path.abspath(hostpath)}:{contpath}' for hostpath, contpath in {'./webroot': '/webroot','./webcert': '/webcert','./webself/conf.d': '/conf.d'}.items()],
+        'volumes': [f'{os.path.abspath(hostpath)}:{contpath}' for hostpath, contpath in {'./webroot': '/webroot', './webcert': '/webcert', './webself/conf.d': '/conf.d'}.items()],
         'healthcheck': {
             'test': 'curl -k https://127.0.0.1 || exit 1',
             'interval': int(health_check_interval) * 1000000000,

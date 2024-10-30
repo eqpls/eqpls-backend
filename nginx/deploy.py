@@ -42,14 +42,6 @@ location /auth/ {
 }
 ''')
 
-    if 'guacamole' in modules:
-        upstreams.append('''
-upstream guacamole { server guacamole:8080; }
-''')
-        locations.append('''
-location /guacamole/ { proxy_pass http://guacamole/guacamole/; }
-''')
-
     if 'minio' in modules:
         upstreams.append('''
 upstream minio-ui { server minio:9001; }
@@ -95,6 +87,14 @@ server {
 }
 upstream minio-s3 { server minio:9000; }
 ''' % (endpoint))
+
+    if 'guacamole' in modules:
+        upstreams.append('''
+upstream guacamole { server guacamole:8080; }
+''')
+        locations.append('''
+location /guacamole/ { proxy_pass http://guacamole/guacamole/; }
+''')
 
     for p in proxies:
         prxconf = config[p]

@@ -50,6 +50,12 @@ class RedisAccount(KeyValueDriverBase):
             except: pass
             self.raConn = None
 
+    async def setSystemToken(self, systemToken):
+        await self.raConn.set('systemToken', systemToken)
+
+    async def getSystemToken(self):
+        return await self.raConn.get('systemToken')
+
     async def read(self, key:str, *args, **kargs):
         async with self.raConn.pipeline(transaction=True) as pipeline:
             result = (await pipeline.get(key).expire(key, self.raExpire).execute())[0]

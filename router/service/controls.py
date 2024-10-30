@@ -35,11 +35,15 @@ class Control(SessionControl):
 
     async def listenQueue(self, category, target, key, val):
         if category == 'group':
+            if 'admin' in self.groupSockets:
+                for socket in self.groupSockets['admin']:
+                    try: await socket.send_json([key, val])
+                    except: pass
             if target in self.groupSockets:
                 for socket in self.groupSockets[target]:
                     try: await socket.send_json([key, val])
                     except: pass
-                LOG.DEBUG(f'send to {self.tenant}:group:{target}')
+            LOG.DEBUG(f'send to {self.tenant}:group:{target}')
         elif category == 'user':
             if target in self.userSockets:
                 for socket in self.userSockets[target]:
@@ -58,16 +62,24 @@ class Control(SessionControl):
                     username = authInfo.username
                     if username not in self.userSockets: self.userSockets[username] = []
                     self.userSockets[username].append(socket)
-                    for group in authInfo.groups:
-                        if group not in self.groupSockets: self.groupSockets[group] = []
-                        self.groupSockets[group].append(socket)
+                    if authInfo.checkAdmin():
+                        if 'admin' not in self.groupSockets: self.groupSockets['admin'] = []
+                        self.groupSockets['admin'].append(socket)
+                    else:
+                        for group in authInfo.groups:
+                            if group not in self.groupSockets: self.groupSockets[group] = []
+                            self.groupSockets[group].append(socket)
                     await socket.send_json(['status', 'connected'])
                 except:
                     try: self.userSockets.remove(socket)
                     except: pass
-                    for group in authInfo.groups:
-                        try: self.groupSockets[group].remove(socket)
+                    if authInfo.checkAdmin():
+                        try: self.groupSockets['admin'].remove(socket)
                         except: pass
+                    else:
+                        for group in authInfo.groups:
+                            try: self.groupSockets[group].remove(socket)
+                            except: pass
                     try: await socket.close()
                     except: pass
                 else:

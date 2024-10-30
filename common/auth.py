@@ -16,6 +16,12 @@ from .exceptions import EpException
 #===============================================================================
 # Implement
 #===============================================================================
+class SystemToken(BaseModel):
+
+    scheme:str = 'Bearer'
+    credentials:str
+
+
 class LoginRequest(BaseModel):
 
     username:str
