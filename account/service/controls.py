@@ -27,7 +27,7 @@ class Control(BaseControl):
         self.minio = Minio(self)
         self.accountDefaultAcl = self.config[f'{self.module}:acl']
         self.accountRestrict = self.config[f'{self.module}:restrict']
-        self.accountRestrictGroupCodes = [code.strip() for code in self.accountRestrict['group_codes'].split(',')]
+        self.accountRestrictGroups = [code.strip() for code in self.accountRestrict['restrict_groups'].split(',')]
 
     async def startup(self):
         await self.redis.initialize()

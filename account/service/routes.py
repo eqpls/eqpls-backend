@@ -253,7 +253,7 @@ async def search_group_list(
 @api.post(f'{ctrl.uriver}/group', tags=['Group'])
 async def create_group(token: AUTH_HEADER, group:Group) -> Group:
     (await ctrl.getAuthInfo(token)).checkCreate('Group')
-    if group.code in ctrl.accountRestrictGroupCodes: raise EpException(409, 'Conflict')
+    if group.code in ctrl.accountRestrictGroups: raise EpException(409, 'Conflict')
     groupName = group.name
     try: await ctrl.keycloak.readGroupByName(ctrl.tenant, groupName)
     except: pass
