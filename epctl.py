@@ -62,7 +62,10 @@ def deploy(module):
     try: os.mkdir(f'{path}/{module}/conf.d')
     except: pass
 
-    importlib.import_module(f'{module}.deploy').config(path, module, config)
+    spec = importlib.util.spec_from_file_location(f'{module}', f'{path}/{module}/deploy.py')
+    dmod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dmod)
+    dmod.config(path, module, config)
 
     modconf = config[module]
     envconf = config[f'{module}:environment']
